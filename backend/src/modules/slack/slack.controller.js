@@ -1,0 +1,284 @@
+// slack.controller.js — Slack Messages API (organisation-scoped, multi-workspace)
+
+import SlackMessage from "../../models/SlackMessage.model.js";
+import SlackWorkspace from "../../models/SlackWorkspace.model.js";
+import {
+  getWorkspaceIdFromRequest,
+  resolveWorkspaceContext,
+} from "../../utils/workspaceContext.js";
+
+function formatTimeAgo(date) {
+  if (!date) return "";
+  const ms = Date.now() - new Date(date).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d ago`;
+  return new Date(date).toLocaleDateString();
+}
+
+function initialsFromName(name) {
+  const parts = (name ?? "?").trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  return (parts[0]?.slice(0, 2) ?? "??").toUpperCase();
+}
+
+const AVATAR_COLORS = [
+  "#0088ff",
+  "#10b981",
+  "#f59e0b",
+  "#dc2626",
+  "#6366f1",
+  "#7c3aed",
+];
+
+function avatarColorForName(name) {
+  let hash = 0;
+  for (let i = 0; i < (name ?? "").length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function statusForMessage(msg) {
+  if (msg.aiProcessed && msg.storyId) {
+    const story = typeof msg.storyId === "object" ? msg.storyId : null;
+    if (story?.status === "pending-review") {
+      return { variant: "at-risk", label: "Pending Review" };
+    }
+    if (story?.status === "rejected") {
+      return { variant: "critical", label: "Rejected" };
+    }
+    return { variant: "healthy", label: "Story Created" };
+  }
+  if (!msg.aiProcessed) {
+    return { variant: "info", label: "Unprocessed" };
+  }
+  return { variant: "info", label: "Received" };
+}
+
+function toListItem(msg, workspaceName) {
+  const client =
+    msg.clientId && typeof msg.clientId === "object" ? msg.clientId : null;
+  const sender = msg.senderName ?? "Unknown sender";
+  const channel =
+    msg.channelName ??
+    (msg.channelId ? `#${msg.channelId}` : "#unknown-channel");
+
+  const wsLabel = workspaceName ?? "Workspace";
+  const sourceLine = `From: ${channel} · ${wsLabel}`;
+
+  const { variant, label } = statusForMessage(msg);
+
+  return {
+    id: msg._id.toString(),
+    messageText: msg.messageText ?? "",
+    senderName: sender,
+    channelName: channel,
+    workspaceName: wsLabel,
+    sourceLine,
+    teamId: msg.teamId ?? null,
+    createdAt: msg.createdAt,
+    time: formatTimeAgo(msg.createdAt),
+    aiProcessed: msg.aiProcessed ?? false,
+    storyId:
+      msg.storyId && typeof msg.storyId === "object"
+        ? msg.storyId._id.toString()
+        : msg.storyId?.toString() ?? null,
+    hasImage: msg.hasImage ?? false,
+    isExternal: msg.isExternal ?? false,
+    autoReplySent: msg.autoReplySent ?? false,
+    clientName: client?.name ?? sender,
+    company: client?.company ?? "",
+    initials: initialsFromName(sender),
+    avatarColor: avatarColorForName(sender),
+    statusVariant: variant,
+    statusLabel: label,
+    senderType: msg.isExternal ? "client" : "internal",
+  };
+}
+
+/** GET /api/slack/messages — org-scoped; x-workspace-id narrows to one Slack workspace */
+export async function listMessages(req, res) {
+  try {
+    const organisationId = req.user?.orgId ?? req.user?.organisationId;
+
+    if (!organisationId) {
+      return res.status(400).json({ message: "Missing organisation" });
+    }
+
+    // Multi-workspace: header from sidebar (or ?workspaceId= for direct links)
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    const wsContext = await resolveWorkspaceContext(req, organisationId);
+
+    if (workspaceId && wsContext.notFound) {
+      return res.json({
+        success: true,
+        workspace: {
+          connected: false,
+          teamName: null,
+          teamId: null,
+          displayName: null,
+          activeWorkspaceId: workspaceId,
+        },
+        workspaces: [],
+        messages: [],
+      });
+    }
+
+    const workspaceQuery = { organisationId, isActive: true };
+    if (wsContext.workspaceId) {
+      workspaceQuery._id = wsContext.workspaceId;
+    }
+
+    const activeWorkspaces = await SlackWorkspace.find(workspaceQuery)
+      .sort({ connectedAt: -1 })
+      .lean();
+
+    const teamIdToName = Object.fromEntries(
+      activeWorkspaces.map((w) => [w.teamId, w.teamName]),
+    );
+
+    const messageFilter = { organisationId };
+
+    // When a workspace is selected — only messages from that Slack team (strict isolation)
+    if (wsContext.teamId) {
+      messageFilter.teamId = wsContext.teamId;
+    } else if (activeWorkspaces.length > 0) {
+      const teamIds = activeWorkspaces.map((w) => w.teamId);
+      messageFilter.$or = [
+        { teamId: { $in: teamIds } },
+        { teamId: null },
+        { teamId: { $exists: false } },
+      ];
+    }
+
+    if (req.query.teamId) {
+      messageFilter.teamId = req.query.teamId;
+    }
+
+    const primary =
+      activeWorkspaces.find(
+        (w) => w._id.toString() === (wsContext.workspaceId ?? ""),
+      ) ?? activeWorkspaces[0];
+    const workspaceName = primary?.teamName ?? null;
+
+    const messages = await SlackMessage.find(messageFilter)
+      .sort({ createdAt: -1 })
+      .populate("clientId", "name company")
+      .populate("storyId", "title status type priority")
+      .lean();
+
+    return res.json({
+      success: true,
+      workspace: {
+        connected: activeWorkspaces.length > 0,
+        teamName: workspaceName,
+        teamId: primary?.teamId ?? null,
+        displayName: workspaceName ? `${workspaceName} Workspace` : null,
+        activeWorkspaceId: primary?._id?.toString() ?? null,
+      },
+      workspaces: activeWorkspaces.map((w) => ({
+        id: w._id.toString(),
+        teamId: w.teamId,
+        teamName: w.teamName,
+        teamIcon: w.teamIcon,
+      })),
+      messages: messages.map((m) =>
+        toListItem(m, teamIdToName[m.teamId] ?? workspaceName ?? undefined),
+      ),
+    });
+  } catch (error) {
+    console.error("[slack] listMessages:", error);
+    return res.status(500).json({ message: error.message ?? "Failed to load messages" });
+  }
+}
+
+/** GET /api/slack/messages/:id */
+export async function getMessageDetail(req, res) {
+  try {
+    const organisationId = req.user?.orgId ?? req.user?.organisationId;
+    if (!organisationId) {
+      return res.status(400).json({ message: "Missing organisation" });
+    }
+
+    const msg = await SlackMessage.findOne({
+      _id: req.params.id,
+      organisationId,
+    })
+      .populate("clientId", "name company")
+      .populate("storyId")
+      .lean();
+
+    if (!msg) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    const workspace = msg.teamId
+      ? await SlackWorkspace.findOne({
+          organisationId,
+          teamId: msg.teamId,
+          isActive: true,
+        }).lean()
+      : await SlackWorkspace.findOne({
+          organisationId,
+          isActive: true,
+        })
+          .sort({ connectedAt: -1 })
+          .lean();
+
+    const listItem = toListItem(msg, workspace?.teamName ?? undefined);
+    const story =
+      msg.storyId && typeof msg.storyId === "object" ? msg.storyId : null;
+
+    let generatedStory = null;
+    if (story) {
+      generatedStory = {
+        id: story._id.toString(),
+        ticketId: `DP-${story._id.toString().slice(-4).toUpperCase()}`,
+        title: story.title,
+        description: story.description ?? "",
+        type: story.type,
+        priority: story.priority,
+        status: story.status,
+        acceptanceCriteria: story.acceptanceCriteria ?? [],
+        sourceQuote: story.sourceQuote ?? msg.messageText ?? "",
+        isAIGenerated: story.isAIGenerated ?? true,
+      };
+    }
+
+    const aiAnalysis = story
+      ? {
+          type: story.type,
+          priority: story.priority,
+          status: story.status,
+          title: story.title,
+          summary: story.description,
+        }
+      : msg.aiProcessed
+        ? { summary: "Message processed — story linked" }
+        : null;
+
+    return res.json({
+      success: true,
+      message: {
+        ...listItem,
+        imageUrl: msg.imageUrl ?? null,
+        threadTs: msg.threadTs,
+        channelId: msg.channelId,
+        originalText: msg.messageText ?? "",
+        aiAnalysis,
+        generatedStory,
+      },
+    });
+  } catch (error) {
+    console.error("[slack] getMessageDetail:", error);
+    return res.status(500).json({ message: error.message ?? "Failed to load message" });
+  }
+}

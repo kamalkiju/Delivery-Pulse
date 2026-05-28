@@ -1,0 +1,703 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #1e293b;
+  -webkit-font-smoothing: antialiased;
+}
+
+input,
+textarea,
+select {
+  font-size: 15px;
+  color: #1e293b;
+}
+
+::placeholder {
+  color: #64748b;
+}
+
+button {
+  font: inherit;
+}
+
+/* Sidebar nav: show all items — scroll when viewport is shorter than Figma frame */
+.sidebar-nav {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+}
+
+@keyframes dashboard-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.dashboard-skeleton {
+  animation: dashboard-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* Documents page — processing row progress bar pulse */
+@keyframes doc-progress-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.doc-progress-fill {
+  animation: doc-progress-pulse 1.2s ease-in-out infinite;
+}
+
+/* ── Interactive controls (hover / pressed) — Figma button & field states ── */
+
+.dp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.1s ease;
+}
+
+.dp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.dp-btn-primary {
+  background-color: #0088ff;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 12px 28px rgba(37, 99, 235, 0.2);
+}
+
+.dp-btn-primary:hover:not(:disabled) {
+  background-color: #0070d9;
+}
+
+.dp-btn-primary:active:not(:disabled) {
+  background-color: #005bb5;
+  transform: scale(0.98);
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.25);
+}
+
+.dp-btn-outline {
+  background-color: #fff;
+  color: #2e3b61;
+  border: 1px solid #e2e8f0;
+}
+
+.dp-btn-outline:hover:not(:disabled) {
+  border-color: #2563eb;
+  color: #0088ff;
+  background-color: #eff6ff;
+}
+
+.dp-btn-outline:active:not(:disabled) {
+  background-color: #dbeafe;
+  transform: scale(0.98);
+}
+
+.dp-btn-secondary {
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.dp-btn-secondary:hover:not(:disabled) {
+  background-color: #e2e8f0;
+}
+
+.dp-btn-secondary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.dp-btn-ghost {
+  background: transparent;
+  color: #64748b;
+  border: none;
+  box-shadow: none;
+}
+
+.dp-btn-ghost:hover:not(:disabled) {
+  color: #0088ff;
+  background-color: rgba(0, 136, 255, 0.06);
+}
+
+.dp-btn-ghost:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.dp-field-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background-color: #f9fafb;
+  box-sizing: border-box;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.dp-field-wrap--error {
+  border-color: #dc2626;
+  background-color: #fef2f2;
+}
+
+.dp-field-wrap:hover {
+  border-color: #cbd5e1;
+}
+
+.dp-field-wrap:focus-within {
+  border-color: #0088ff;
+  box-shadow: 0 0 0 3px rgba(0, 136, 255, 0.15);
+  background-color: #fff;
+}
+
+.dp-field-wrap--error:focus-within {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.dp-select {
+  border: 1px solid #e2e8f0;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.dp-select:hover {
+  border-color: #cbd5e1;
+}
+
+.dp-select:focus {
+  outline: none;
+  border-color: #0088ff;
+  box-shadow: 0 0 0 3px rgba(0, 136, 255, 0.15);
+}
+
+.dp-select:active {
+  border-color: #0070d9;
+}
+
+.dp-segment {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  color: #2e3b61;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.dp-segment:hover {
+  border-color: #2563eb;
+  background-color: #eff6ff;
+}
+
+.dp-segment:active {
+  transform: scale(0.97);
+}
+
+.dp-segment--active {
+  border-color: #0088ff;
+  background-color: rgba(0, 136, 255, 0.08);
+  color: #0088ff;
+}
+
+.dp-link:hover {
+  text-decoration: underline;
+}
+
+.dp-link:active {
+  opacity: 0.85;
+}
+
+/* Auth pages — login / signup links and fields */
+
+.dp-auth-link {
+  font-weight: 600;
+  color: #0088ff;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    text-decoration 0.15s ease,
+    opacity 0.1s ease;
+}
+
+.dp-auth-link:hover {
+  color: #0070d9;
+  text-decoration: underline;
+}
+
+.dp-auth-link:active {
+  color: #005bb5;
+  opacity: 0.9;
+}
+
+a.dp-btn.dp-auth-signup-cta {
+  display: inline-flex;
+  width: 100%;
+  text-decoration: none;
+  box-sizing: border-box;
+  margin-bottom: 24px;
+}
+
+.dp-btn-auth {
+  min-height: 48px;
+  padding: 0 20px;
+}
+
+.dp-field-icon-btn {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.dp-field-icon-btn:hover {
+  background-color: rgba(0, 136, 255, 0.08);
+  color: #0088ff;
+}
+
+.dp-field-icon-btn:active {
+  background-color: rgba(0, 136, 255, 0.16);
+  transform: scale(0.94);
+}
+
+.dp-field-wrap:hover:not(.dp-field-wrap--error):not(:focus-within) {
+  border-color: #94a3b8;
+  background-color: #fff;
+}
+
+a.dp-btn.dp-auth-signup-cta:hover {
+  border-color: #2563eb;
+  color: #0088ff;
+  background-color: #eff6ff;
+}
+
+a.dp-btn.dp-auth-signup-cta:active {
+  background-color: #dbeafe;
+  transform: scale(0.98);
+}
+
+/* Login page — Sign up below Microsoft (high visibility) */
+.dp-btn-signup-login {
+  margin-top: 12px;
+  margin-bottom: 8px;
+  border: 2px solid #0088ff !important;
+  color: #0088ff !important;
+  background-color: #eff6ff !important;
+  font-weight: 700;
+  font-size: 15px;
+  box-shadow: 0 2px 8px rgba(0, 136, 255, 0.15) !important;
+}
+
+.dp-btn-signup-login:hover:not(:disabled) {
+  background-color: #eff6ff !important;
+  border-color: #0070d9 !important;
+  color: #0070d9 !important;
+}
+
+.dp-btn-signup-login:active:not(:disabled) {
+  background-color: #dbeafe !important;
+  transform: scale(0.98);
+}
+
+/* ── Sidebar navigation ── */
+
+.sidebar-nav-item {
+  width: 80px;
+  height: 60px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 4px;
+  cursor: pointer;
+  border-radius: 8px;
+  border: none;
+  position: relative;
+  box-sizing: border-box;
+  background-color: transparent;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease,
+    box-shadow 0.15s ease;
+}
+
+.sidebar-nav-item--wide {
+  width: 64px;
+}
+
+.sidebar-nav-item:hover:not(.sidebar-nav-item--current) {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-nav-item:active:not(.sidebar-nav-item--current) {
+  background-color: rgba(255, 255, 255, 0.18);
+  transform: scale(0.96);
+}
+
+.sidebar-nav-item--current {
+  background-color: #0088ff;
+  box-shadow: 0 2px 8px rgba(0, 136, 255, 0.35);
+}
+
+.sidebar-nav-item--current:hover {
+  background-color: #0070d9;
+}
+
+.sidebar-nav-item--current:active {
+  background-color: #005bb5 !important;
+  transform: scale(0.96);
+  box-shadow: 0 1px 4px rgba(0, 80, 180, 0.45);
+}
+
+.sidebar-chrome-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  color: #e2e8f0;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.sidebar-chrome-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.sidebar-chrome-btn:active {
+  background-color: rgba(255, 255, 255, 0.18);
+  transform: scale(0.94);
+}
+
+/* ── Top nav icon buttons ── */
+
+.dp-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  padding: 0;
+  flex-shrink: 0;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.dp-icon-btn:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.dp-icon-btn:active {
+  background-color: rgba(255, 255, 255, 0.22);
+  transform: scale(0.94);
+}
+
+.dp-avatar-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  background-color: #0088ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease,
+    box-shadow 0.15s ease;
+}
+
+.dp-avatar-btn:hover {
+  background-color: #0070d9;
+}
+
+.dp-avatar-btn:active {
+  background-color: #005bb5;
+  transform: scale(0.94);
+}
+
+/* ── Settings / client sub-navigation menu ── */
+
+.dp-subnav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 15px;
+  color: #64748b;
+  background-color: transparent;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.dp-subnav-item:hover:not(.dp-subnav-item--active) {
+  background-color: #f1f5f9;
+  color: #475569;
+}
+
+.dp-subnav-item:active:not(.dp-subnav-item--active) {
+  background-color: #e2e8f0;
+  transform: scale(0.99);
+}
+
+.dp-subnav-item--active {
+  background-color: #eff6ff;
+  color: #0088ff;
+  font-weight: 600;
+}
+
+.dp-subnav-item--active:hover {
+  background-color: #dbeafe;
+}
+
+.dp-subnav-item--active:active {
+  background-color: #bfdbfe !important;
+  transform: scale(0.98);
+}
+
+/* ── Client detail tabs ── */
+
+.dp-tab {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 0 12px;
+  font-size: 15px;
+  font-weight: 400;
+  color: #64748b;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.dp-tab:hover:not(.dp-tab--active) {
+  color: #475569;
+  background-color: rgba(0, 136, 255, 0.04);
+}
+
+.dp-tab:active:not(.dp-tab--active) {
+  color: #0088ff;
+  transform: scale(0.98);
+}
+
+.dp-tab--active {
+  font-weight: 700;
+  color: #0088ff;
+  border-bottom-color: #0088ff;
+}
+
+.dp-tab--active:hover {
+  color: #0070d9;
+  border-bottom-color: #0070d9;
+}
+
+.dp-tab--active:active {
+  color: #005bb5;
+  border-bottom-color: #005bb5;
+  background-color: rgba(0, 136, 255, 0.08);
+  transform: scale(0.98);
+}
+
+/* ── Fields: pressed while clicking ── */
+
+.dp-field-wrap:has(input:active),
+.dp-field-wrap:has(textarea:active),
+.dp-field-wrap:has(select:active) {
+  border-color: #0070d9;
+  background-color: #fff;
+}
+
+.dp-segment--active:hover {
+  background-color: rgba(0, 136, 255, 0.14);
+  border-color: #0070d9;
+}
+
+.dp-segment--active:active {
+  background-color: rgba(0, 136, 255, 0.22);
+  transform: scale(0.97);
+}
+
+/* Danger button variant */
+.dp-btn-danger {
+  background-color: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 14px;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.dp-btn-danger:hover:not(:disabled) {
+  background-color: #b91c1c;
+}
+
+.dp-btn-danger:active:not(:disabled) {
+  background-color: #991b1b;
+  transform: scale(0.98);
+}
+
+.dp-btn--compact {
+  height: 40px;
+  border-radius: 8px;
+  font-size: 13px;
+  padding: 0 16px;
+}
+
+.dp-btn-outline-brand {
+  background-color: transparent;
+  color: #0088ff;
+  border: 1px solid #0088ff;
+  box-shadow: none;
+}
+
+.dp-btn-outline-brand:hover:not(:disabled) {
+  background-color: #eff6ff;
+  border-color: #0070d9;
+  color: #0070d9;
+}
+
+.dp-btn-outline-brand:active:not(:disabled) {
+  background-color: #dbeafe;
+  transform: scale(0.98);
+}
+
+/* Selectable list rows (meetings, slack messages, etc.) */
+
+.dp-list-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid #e2e8f0;
+  border-left: 3px solid transparent;
+  background-color: #fff;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease,
+    border-color 0.15s ease;
+}
+
+.dp-list-item:hover:not(.dp-list-item--selected) {
+  background-color: #f8fafc;
+}
+
+.dp-list-item:active:not(.dp-list-item--selected) {
+  background-color: #f1f5f9;
+}
+
+.dp-list-item--selected {
+  background-color: #eff6ff;
+}
+
+.dp-list-item--selected:hover {
+  background-color: #dbeafe;
+}
+
+.dp-list-item--selected:active {
+  background-color: #bfdbfe !important;
+  transform: scale(0.995);
+}
+
+.dp-list-item--accent.dp-list-item--selected {
+  border-left-color: #0088ff;
+}
+
+.dp-list-item--plain {
+  border-left: none;
+}
