@@ -29,18 +29,8 @@ const connectDB = async () => {
       }
     }
 
-    // mongoose.connect() opens the connection to MongoDB
-    await mongoose.connect(uri, {
-      // useNewUrlParser: true — tells Mongoose to use the newer URL parser
-      // (older parser had bugs with special characters in passwords)
-      // Note: in Mongoose 6+, this is always on; we keep it here for clarity when learning
-      useNewUrlParser: true,
-
-      // useUnifiedTopology: true — uses the modern connection engine
-      // (better handling of servers, retries, and connection pooling)
-      // Note: in Mongoose 6+, this is the default; safe to list for documentation
-      useUnifiedTopology: true,
-    });
+    // mongoose.connect() opens the connection to MongoDB (Mongoose 6+ needs no extra options)
+    await mongoose.connect(uri);
 
     // If we reach this line, the database accepted our connection
     console.log(
