@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { App } from "@slack/bolt";
+import { WebClient } from "@slack/web-api";
 
 import SlackMessage from "../../models/SlackMessage.model.js";
 import SlackWorkspace from "../../models/SlackWorkspace.model.js";
@@ -178,6 +179,16 @@ async function processIncomingMessage({ message, say, client, workspace }) {
 function registerMessageListener(app, workspace) {
   const teamId = workspace.teamId;
 
+  // Catch ALL message events including subtypes (bot messages, edits, file shares)
+  app.event("message", async ({ event }) => {
+    console.log("=== MESSAGE EVENT FIRED ===");
+    console.log("Channel:", event.channel);
+    console.log("Text:", event.text);
+    console.log("User:", event.user);
+    console.log("Subtype:", event.subtype ?? "(none)");
+    console.log("===========================");
+  });
+
   app.message(async ({ message, say, client }) => {
     try {
       console.log(
@@ -259,6 +270,17 @@ async function ensureSocketCoordinator() {
     },
   });
 
+  // Catch ALL message events on the coordinator (including subtypes Bolt normally filters out)
+  socketCoordinator.event("message", async ({ event }) => {
+    console.log("=== SOCKET COORDINATOR: ANY MESSAGE EVENT ===");
+    console.log("Channel:", event.channel);
+    console.log("Text:", event.text);
+    console.log("Subtype:", event.subtype ?? "(none)");
+    console.log("Team:", event.team);
+    console.log("Bot ID:", event.bot_id ?? "(none)");
+    console.log("=============================================");
+  });
+
   socketCoordinator.message(async ({ message, say, client }) => {
     try {
       const teamId = message.team ?? message.team_id;
@@ -295,9 +317,17 @@ async function ensureSocketCoordinator() {
     }
   });
 
-  await socketCoordinator.start();
-  socketCoordinatorStarted = true;
-  console.log("[slack] Socket Mode coordinator started (multi-workspace)");
+  try {
+    await socketCoordinator.start();
+    socketCoordinatorStarted = true;
+    console.log("[slack] Socket Mode coordinator started (multi-workspace)");
+  } catch (err) {
+    socketCoordinator = null;
+    socketCoordinatorStarted = false;
+    console.error("[slack] Socket Mode failed to start:", err.message);
+    console.error("[slack] Check that SLACK_APP_TOKEN (xapp-) and SLACK_SIGNING_SECRET belong to the same Slack app");
+    throw err;
+  }
 
   return socketCoordinator;
 }
@@ -315,10 +345,45 @@ export async function startSlack() {
   );
 
   for (const workspace of workspaces) {
-    await addWorkspace(workspace);
+    try {
+      await addWorkspace(workspace);
+    } catch (err) {
+      console.error(
+        `[slack] Failed to register workspace ${workspace.teamName} (${workspace.teamId}) — skipping:`,
+        err.message,
+      );
+    }
   }
 
   await ensureSocketCoordinator();
+
+  // Startup check: verify bot is a member of its mapped client channels
+  for (const [teamId, entry] of slackApps) {
+    try {
+      const slackClient = new WebClient(entry.workspace.accessToken);
+      const channels = await SlackChannel.find({
+        workspaceId: entry.workspace._id,
+        isClientChannel: true,
+      });
+      for (const ch of channels) {
+        try {
+          const info = await slackClient.conversations.info({ channel: ch.channelId });
+          console.log(
+            `[slack] Channel ${ch.channelName} (${ch.channelId}) — bot is_member: ${info.channel.is_member}`,
+          );
+          if (!info.channel.is_member) {
+            console.warn(
+              `[slack] ⚠ Bot NOT in #${ch.channelName} — run /invite @YourBotName in Slack`,
+            );
+          }
+        } catch (err) {
+          console.warn(`[slack] Could not check channel ${ch.channelId}:`, err.message);
+        }
+      }
+    } catch (err) {
+      console.warn(`[slack] Channel membership check failed for ${teamId}:`, err.message);
+    }
+  }
 
   return { slackApps, socketCoordinator };
 }

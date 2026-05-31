@@ -30,15 +30,24 @@ app.listen(PORT, () => {
   console.log(`DeliveryPulse server running on port ${PORT}`);
 });
 
-// Multi-workspace Slack bots (OAuth tokens in MongoDB + Socket Mode app token)
-if (process.env.SLACK_APP_TOKEN && process.env.SLACK_SIGNING_SECRET) {
+// Validate Slack token formats before attempting to start bots
+const appToken = process.env.SLACK_APP_TOKEN;
+const botToken = process.env.SLACK_BOT_TOKEN;
+const signingSecret = process.env.SLACK_SIGNING_SECRET;
+
+if (!appToken) {
+  console.warn("[slack] Bots not started — SLACK_APP_TOKEN missing from .env");
+} else if (!appToken.startsWith("xapp-")) {
+  console.error("[slack] Bots not started — SLACK_APP_TOKEN must start with xapp- (got:", appToken.slice(0, 10) + "…)");
+} else if (!signingSecret) {
+  console.warn("[slack] Bots not started — SLACK_SIGNING_SECRET missing from .env");
+} else {
+  if (botToken && !botToken.startsWith("xoxb-")) {
+    console.warn("[slack] SLACK_BOT_TOKEN format looks wrong — should start with xoxb-");
+  }
   try {
     await startSlack();
   } catch (err) {
-    console.error("[slack] Failed to start bots:", err.message);
+    console.error("[slack] Failed to start bots (server continues):", err.message);
   }
-} else {
-  console.warn(
-    "[slack] Bots not started — set SLACK_APP_TOKEN and SLACK_SIGNING_SECRET in .env (workspace bot tokens come from OAuth)",
-  );
 }
