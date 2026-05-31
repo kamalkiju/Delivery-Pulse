@@ -49,18 +49,35 @@ export async function analyzeMessage({
   }
 
   // Instructions for Claude: return ONLY JSON, no markdown or extra commentary
-  const prompt = `You are an IT project analyst. Analyze this client message from ${clientName}.
+  const prompt = `You are an expert IT project analyst for a software delivery company. Analyze this client message carefully.
 
-Return ONLY valid JSON with these fields:
+Classification rules:
+- If message mentions: error, bug, not working, broken, crash, failed, 500, 404, exception → type = "Bug"
+- If message mentions: new feature, add, create, build, need, want, require → type = "Feature"
+- If message mentions: as a user, user story, should be able to → type = "Story"
+- Otherwise → type = "Task"
+
+Priority rules:
+- Critical: system down, 500 error, cannot login, production broken, urgent, ASAP
+- High: major feature broken, blocks many users
+- Medium: feature issue but workaround exists
+- Low: minor UI, enhancement, nice to have
+
+Return ONLY valid JSON:
 {
-  "type": "Bug" or "Story" or "Task" or "Feature",
-  "title": "clear concise title max 10 words",
-  "description": "detailed description",
-  "priority": "Critical" or "High" or "Medium" or "Low",
-  "acceptanceCriteria": ["criterion 1", "criterion 2", "criterion 3"]
+  "type": "Bug",
+  "title": "Login returning 500 Internal Server Error",
+  "description": "The login page is returning a 500 error. Users are unable to log in to the system.",
+  "priority": "Critical",
+  "acceptanceCriteria": [
+    "Login page loads without errors",
+    "Users can successfully authenticate",
+    "No 500 errors in server logs"
+  ],
+  "suggestedSprint": "Current"
 }
 
-Client message: "${messageText || "(no text — see attached image if any)"}"`;
+Client (${clientName}) message: "${messageText || "(no text — see attached image if any)"}"`;
 
   // Claude messages API expects an array of content blocks (text + optional image)
   const content = [{ type: "text", text: prompt }];
