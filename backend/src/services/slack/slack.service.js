@@ -65,8 +65,9 @@ async function processIncomingMessage({ message, say, client, workspace }) {
     return;
   }
 
-  // 2 — Client lookup by Slack channel ID (must be marked isClientChannel in Settings)
+  // 2 — Client lookup by Slack channel ID, scoped to this org (must be marked isClientChannel in Settings)
   const clientChannel = await SlackChannel.findOne({
+    organisationId: activeWorkspace.organisationId,
     channelId: message.channel,
     isClientChannel: true,
   }).populate("clientId");
