@@ -1,28 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // slack.service.js — Multi-tenant Slack bots (one per connected workspace)
 //
-// ARCHITECTURE (how multiple DeliveryPulse customers share one Slack app):
-//
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │  Slack Socket Mode (one SLACK_APP_TOKEN in .env)             │
-//   │  Delivers events from ALL installed workspaces              │
-//   └──────────────────────────┬──────────────────────────────────┘
-//                              │ message event includes team_id
-//                              ▼
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │  socketCoordinator — single Bolt App with authorize()         │
-//   │  Picks the correct workspace.accessToken per team_id        │
-//   └──────────────────────────┬──────────────────────────────────┘
-//                              │
-//          ┌───────────────────┼───────────────────┐
-//          ▼                   ▼                   ▼
-//   slackApps Map        slackApps Map        slackApps Map
-//   teamId: T001         teamId: T002         teamId: T003
-//   { app, workspace }   { app, workspace }   { app, workspace }
-//
-// Each OAuth-connected workspace gets its own Bolt App object (bot token).
-// slackApps stores them so we can add/remove workspaces without restarting
-// the whole server. Socket Mode stays one connection; authorize() swaps tokens.
+// Socket Mode: one SLACK_APP_TOKEN delivers events from all installed workspaces.
+// authorize() picks the correct bot token per team_id.
+// Each workspace also gets its own Bolt App + app.message listener (Web API token).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { App } from "@slack/bolt";
@@ -37,55 +18,90 @@ import slackReply from "./slack.reply.js";
 /** Active workspace bots keyed by Slack team_id (T…) */
 const slackApps = new Map();
 
-/** Single Socket Mode connection (Slack allows one per app-level token) */
+/** Single Socket Mode connection (one per app-level token) */
 let socketCoordinator = null;
 let socketCoordinatorStarted = false;
 
 const signingSecret = () => process.env.SLACK_SIGNING_SECRET;
 const appLevelToken = () => process.env.SLACK_APP_TOKEN;
 
-// ── Message processing (shared by every workspace) ───────────────────────────
+// ── Message processing (shared by coordinator + per-workspace listeners) ─────
 
 /**
- * Handle one incoming Slack message for a known workspace.
- * Only client channels (isClientChannel) create stories.
+ * Handle one incoming Slack message.
+ * Only channels mapped as client channels (isClientChannel) are processed.
  */
 async function processIncomingMessage({ message, say, client, workspace }) {
+  // Ignore bot messages and edits
   if (message.subtype) return;
   if (message.bot_id) return;
 
-  const organisationId = workspace.organisationId;
-  const teamId = workspace.teamId;
+  // 1 — Log raw payload (debug: confirm Socket Mode is delivering events)
+  console.log("=== RAW SLACK MESSAGE ===");
+  console.log("Channel:", message.channel);
+  console.log("User:", message.user);
+  console.log("Text:", message.text);
+  console.log("Team:", message.team ?? message.team_id);
+  console.log("=========================");
 
-  // Step 1 — Find SlackChannel row for this channel in this workspace
-  const monitored = await SlackChannel.findOne({
-    organisationId,
-    workspaceId: workspace._id,
+  const teamId =
+    message.team ?? message.team_id ?? workspace?.teamId ?? null;
+
+  // Resolve workspace if not passed (coordinator path)
+  let activeWorkspace = workspace;
+  if (!activeWorkspace && teamId) {
+    const entry = slackApps.get(teamId);
+    activeWorkspace = entry?.workspace;
+    if (!activeWorkspace) {
+      activeWorkspace = await SlackWorkspace.findOne({
+        teamId,
+        isActive: true,
+      }).lean();
+    }
+  }
+
+  if (!activeWorkspace?.organisationId) {
+    console.log("[slack] No active workspace for team:", teamId);
+    return;
+  }
+
+  // 2 — Client lookup by Slack channel ID (must be marked isClientChannel in Settings)
+  const clientChannel = await SlackChannel.findOne({
     channelId: message.channel,
     isClientChannel: true,
   }).populate("clientId");
 
-  if (!monitored) {
+  console.log("Client channel found:", clientChannel ? "YES" : "NO");
+
+  // 3 — Skip unmapped channels
+  if (!clientChannel) {
+    console.log("Channel not mapped as client channel:", message.channel);
     return;
   }
 
-  if (!monitored.clientId) {
+  if (!clientChannel.clientId) {
     console.log(
-      `[slack] Channel ${message.channel} marked client but no clientId — skip`,
+      "[slack] Channel mapped but no clientId:",
+      message.channel,
     );
     return;
   }
 
+  // 4 — Organisation + client from the mapped channel row
+  const organisationId = clientChannel.organisationId;
   const clientRecord =
-    typeof monitored.clientId === "object" ? monitored.clientId : null;
+    typeof clientChannel.clientId === "object"
+      ? clientChannel.clientId
+      : null;
 
   if (!clientRecord) {
+    console.log("[slack] Could not load client for channel:", message.channel);
     return;
   }
 
-  const channelName = monitored.isPrivate
-    ? `#${monitored.channelName} (private)`
-    : `#${monitored.channelName}`;
+  const channelName = clientChannel.isPrivate
+    ? `#${clientChannel.channelName} (private)`
+    : `#${clientChannel.channelName}`;
 
   let userInfo;
   try {
@@ -102,9 +118,10 @@ async function processIncomingMessage({ message, say, client, workspace }) {
   const hasImage = Boolean(message.files?.length > 0);
   const imageFile = hasImage ? message.files[0] : null;
 
+  // 5 — Save message, run AI, create draft story, reply in thread
   const savedMessage = await SlackMessage.create({
     organisationId,
-    teamId,
+    teamId: activeWorkspace.teamId ?? teamId,
     clientId: clientRecord._id,
     channelId: message.channel,
     channelName,
@@ -112,7 +129,7 @@ async function processIncomingMessage({ message, say, client, workspace }) {
     senderName: userInfo.user?.real_name ?? userInfo.user?.name,
     senderEmail: userInfo.user?.profile?.email,
     isExternal,
-    messageText: message.text,
+    messageText: message.text ?? "",
     hasImage,
     imageUrl: imageFile?.url_private ?? undefined,
     threadTs: message.ts,
@@ -148,21 +165,26 @@ async function processIncomingMessage({ message, say, client, workspace }) {
   await savedMessage.save();
 
   console.log(
-    `[slack] ${workspace.teamName} (${teamId}) → story ${story._id} for ${clientRecord.name}`,
+    `[slack] ${activeWorkspace.teamName ?? teamId} → story ${story._id} for ${clientRecord.name}`,
   );
 }
 
 /**
- * Register app.message on a Bolt App for one workspace.
- * The handler resolves the latest workspace doc from slackApps by team_id.
+ * Register app.message on one workspace Bolt App.
+ * Called once per OAuth-connected workspace in addWorkspace().
  */
 function registerMessageListener(app, workspace) {
   const teamId = workspace.teamId;
 
   app.message(async ({ message, say, client }) => {
     try {
+      console.log(
+        `[slack] app.message fired for workspace ${workspace.teamName} (${teamId})`,
+      );
+
       const entry = slackApps.get(teamId);
       if (!entry?.workspace?.isActive) {
+        console.log("[slack] Workspace inactive, skip:", teamId);
         return;
       }
 
@@ -176,11 +198,14 @@ function registerMessageListener(app, workspace) {
       console.error(`[slack] Error in workspace ${teamId}:`, err);
     }
   });
+
+  console.log(
+    `[slack] app.message listener registered for ${workspace.teamName} (${teamId})`,
+  );
 }
 
 /**
- * Create a Bolt App for one workspace using its OAuth bot token.
- * This workspace's token is used for Web API calls (join channel, etc.).
+ * Create a Bolt App for one workspace (OAuth bot token).
  */
 function createWorkspaceBoltApp(workspace) {
   const app = new App({
@@ -193,8 +218,7 @@ function createWorkspaceBoltApp(workspace) {
 }
 
 /**
- * Ensure the Socket Mode coordinator is running (once per server process).
- * authorize() supplies the correct bot token for each team_id on every event.
+ * Socket Mode coordinator — one connection, authorize() per team_id.
  */
 async function ensureSocketCoordinator() {
   if (socketCoordinatorStarted && socketCoordinator) {
@@ -203,7 +227,7 @@ async function ensureSocketCoordinator() {
 
   if (!appLevelToken()) {
     console.warn(
-      "[slack] SLACK_APP_TOKEN missing — Socket Mode not started (OAuth workspaces only work after token is set)",
+      "[slack] SLACK_APP_TOKEN missing — Socket Mode not started",
     );
     return null;
   }
@@ -236,25 +260,27 @@ async function ensureSocketCoordinator() {
   socketCoordinator.message(async ({ message, say, client }) => {
     try {
       const teamId = message.team ?? message.team_id;
-      if (!teamId) return;
-
-      const entry = slackApps.get(teamId);
-      if (!entry) {
-        const ws = await SlackWorkspace.findOne({ teamId, isActive: true });
-        if (!ws) return;
-        await addWorkspace(ws);
-        const refreshed = slackApps.get(teamId);
-        if (!refreshed) return;
-        await processIncomingMessage({
-          message,
-          say,
-          client,
-          workspace: refreshed.workspace,
-        });
+      if (!teamId) {
+        console.log("[slack] Message missing team id, skip");
         return;
       }
 
-      if (!entry.workspace.isActive) return;
+      console.log("[slack] Socket coordinator received message for team:", teamId);
+
+      let entry = slackApps.get(teamId);
+      if (!entry) {
+        const ws = await SlackWorkspace.findOne({ teamId, isActive: true });
+        if (!ws) {
+          console.log("[slack] No workspace in DB for team:", teamId);
+          return;
+        }
+        await addWorkspace(ws);
+        entry = slackApps.get(teamId);
+      }
+
+      if (!entry?.workspace?.isActive) {
+        return;
+      }
 
       await processIncomingMessage({
         message,
@@ -277,10 +303,7 @@ async function ensureSocketCoordinator() {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * startSlack — called from server.js on boot.
- * Step 1: Load every active SlackWorkspace from MongoDB.
- * Step 2: Create a Bolt App per workspace and store in slackApps.
- * Step 3: Start the single Socket Mode coordinator.
+ * startSlack — boot: load workspaces, register listeners, start Socket Mode.
  */
 export async function startSlack() {
   const workspaces = await SlackWorkspace.find({ isActive: true });
@@ -299,8 +322,7 @@ export async function startSlack() {
 }
 
 /**
- * addWorkspace — register one workspace bot (OAuth callback or boot).
- * Creates a dedicated App with that workspace's accessToken.
+ * addWorkspace — register Bolt App + app.message for one workspace.
  */
 export async function addWorkspace(workspaceDoc) {
   const workspace =
@@ -343,8 +365,7 @@ export async function addWorkspace(workspaceDoc) {
 }
 
 /**
- * removeWorkspace — stop listening for one workspace (disconnect).
- * Removes from slackApps Map; authorize() will reject that team_id next.
+ * removeWorkspace — stop listening for one workspace.
  */
 export async function removeWorkspace(teamId) {
   const entry = slackApps.get(teamId);
@@ -362,7 +383,6 @@ export async function removeWorkspace(teamId) {
   console.log(`[slack] Removed workspace bot for team ${teamId}`);
 }
 
-/** List connected team IDs (debug / health) */
 export function getActiveWorkspaceTeamIds() {
   return [...slackApps.keys()];
 }
