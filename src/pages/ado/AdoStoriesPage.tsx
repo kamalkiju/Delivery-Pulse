@@ -24,8 +24,8 @@ interface Story {
   client: string; // Client pill chip on the meta row — e.g. TechCorp
   sprint: string; // Sprint meta — e.g. Sprint 14
   dateLabel: string; // Date meta — e.g. 22 May
-  progressPct?: number; // Optional % used only on “In Progress” cards — renders the orange progress line
-  doneLabel?: string; // Optional “Completed …” line used in Done column — matches Figma
+  progressPct?: number; // Optional % used only on "In Progress" cards — renders the orange progress line
+  doneLabel?: string; // Optional "Completed …" line used in Done column — matches Figma
   isAiGenerated?: boolean; // Optional badge in details panel — mapped to the purple badge rule
   columnId: ColumnId; // Which kanban column the story belongs to — drives grouping
 }
@@ -33,7 +33,7 @@ interface Story {
 // Column — one kanban column container — header + cards list
 interface Column {
   id: ColumnId; // Stable identifier — used for grouping and rendering
-  title: string; // Display label — “To Do”, “In Progress”, “In Review”, “Done”
+  title: string; // Display label — "To Do", "In Progress", "In Review", "Done"
   accentColor: string; // Header background color — matches Figma (blue/orange/purple/green)
 }
 
@@ -67,7 +67,7 @@ const initialStories: Story[] = [
     client: "TechCorp", // Meta chip on the card
     sprint: "Sprint 14", // Meta text
     dateLabel: "22 May", // Meta text
-    columnId: "todo", // Placed under “To Do”
+    columnId: "todo", // Placed under "To Do"
     isAiGenerated: true, // Helpful for the detail panel badge
   },
   {
@@ -112,7 +112,7 @@ const initialStories: Story[] = [
     client: "TechCorp",
     sprint: "Sprint 14",
     dateLabel: "22 May",
-    progressPct: 65, // Matches Figma “65%” under the orange progress line
+    progressPct: 65, // Matches Figma "65%" under the orange progress line
     columnId: "in-progress",
   },
   {
@@ -124,7 +124,7 @@ const initialStories: Story[] = [
     client: "Northwind",
     sprint: "Sprint 14",
     dateLabel: "22 May",
-    progressPct: 55, // Matches Figma “55%”
+    progressPct: 55, // Matches Figma "55%"
     columnId: "in-progress",
   },
   {
@@ -136,7 +136,7 @@ const initialStories: Story[] = [
     client: "Acme",
     sprint: "Sprint 14",
     dateLabel: "22 May",
-    progressPct: 80, // Matches Figma “80%”
+    progressPct: 80, // Matches Figma "80%"
     columnId: "in-progress",
   },
   {
@@ -246,7 +246,7 @@ export default function AdoStoriesPage() {
   // handleCardClick — opens the detail panel and sets selectedStoryId — used by every card
   const handleCardClick = (storyId: string) => {
     setSelectedStoryId(storyId); // Store the clicked story id — so detail panel knows what to display
-    setIsDetailOpen(true); // Open the panel — matches “card click opens a 480px side panel”
+    setIsDetailOpen(true); // Open the panel — matches "card click opens a 480px side panel"
   }; // End click handler — keeps card component simple
 
   // handleClosePanel — closes the panel and clears selection — used by overlay and X button
@@ -280,7 +280,7 @@ export default function AdoStoriesPage() {
             flexWrap: "wrap", // Allow wrap on small screens — prevents overflow
           }}
         >
-          {/* Left: filter “dropdowns” (static buttons to match frame) */}
+          {/* Left: filter "dropdowns" (static buttons to match frame) */}
           <div
             style={{
               display: "flex", // Keep filter buttons inline
@@ -304,13 +304,13 @@ export default function AdoStoriesPage() {
           >
             <button
               type="button" // Prevent form submit behavior — this is a UI button
-              style={syncButtonStyle} // Blue outline style — matches “Sync ADO” in the frame
+              style={syncButtonStyle} // Blue outline style — matches "Sync ADO" in the frame
             >
               Sync ADO
             </button>
             <button
               type="button" // Prevent form submit behavior — this is a UI button
-              style={newButtonStyle} // Solid brand-blue with white text — matches “New +”
+              style={newButtonStyle} // Solid brand-blue with white text — matches "New +"
             >
               New +
             </button>
@@ -322,7 +322,7 @@ export default function AdoStoriesPage() {
           style={{
             display: "grid", // Grid is ideal for equal-width columns
             gridTemplateColumns: "repeat(4, minmax(0, 1fr))", // Exactly 4 columns — each can shrink without overflow
-            gap: spacing[4], // 16px column gap — matches spec “Column gap = 16px”
+            gap: spacing[4], // 16px column gap — matches spec "Column gap = 16px"
             width: "100%", // Board spans the toolbar width
             alignItems: "start", // Columns align to the top — like Figma
           }}
@@ -383,7 +383,7 @@ export default function AdoStoriesPage() {
               <div
                 style={{
                   fontSize: "24px", // Page title size per spec — 24px
-                  fontWeight: 700, // Bold per spec — “24px Bold”
+                  fontWeight: 700, // Bold per spec — "24px Bold"
                   color: colors["text-primary"], // Primary text token — matches #1e293b
                   lineHeight: 1.2, // Tight title leading — keeps header compact
                 }}
@@ -417,7 +417,7 @@ export default function AdoStoriesPage() {
             </button>
           </div>
 
-          {/* Panel body — simple “details” content to keep it working and useful */}
+          {/* Panel body — simple "details" content to keep it working and useful */}
           <div
             style={{
               padding: spacing[5], // Internal padding — readable spacing
@@ -431,7 +431,7 @@ export default function AdoStoriesPage() {
             <div
               style={{
                 border: `1px solid ${colors["border-default"]}`, // Card border — matches token
-                borderRadius: borderRadius.md, // 8px radius — matches spec “Card border radius = 8px”
+                borderRadius: borderRadius.md, // 8px radius — matches spec "Card border radius = 8px"
                 padding: spacing[4], // 16px padding — comfortable inside panel
                 backgroundColor: colors["surface-subtle"], // Subtle surface — echoes Figma chips background
               }}
@@ -439,7 +439,7 @@ export default function AdoStoriesPage() {
               <div
                 style={{
                   fontSize: typography.tableHeader.size, // 11px — table header size token
-                  fontWeight: typography.tableHeader.weight, // 600 — “SemiBold”
+                  fontWeight: typography.tableHeader.weight, // 600 — "SemiBold"
                   color: colors["text-tertiary"], // Tertiary gray — matches spec
                   textTransform: "uppercase", // Uppercase headers — matches spec
                   marginBottom: spacing[2], // Space under header label
@@ -456,7 +456,7 @@ export default function AdoStoriesPage() {
                 }}
               >
                 Client: <strong style={{ color: colors["text-primary"] }}>{selectedStory.client}</strong> {/* Client name */}
-                {" · "} {/* Visual separator — matches “·” usage in Figma meta */}
+                {" · "} {/* Visual separator — matches "·" usage in Figma meta */}
                 {selectedStory.sprint} {/* Sprint label */}
                 {" · "} {/* Separator */}
                 {selectedStory.dateLabel} {/* Date label */}
@@ -543,13 +543,13 @@ function KanbanColumn({
             backgroundColor: "rgba(255,255,255,0.16)", // Semi-transparent pill — matches Figma count chip feel
             borderRadius: "12px", // Rounded chip — visually matches the header styling
             height: 24, // Fixed height — consistent chip size
-            minWidth: 24, // Minimum width so “0” still looks like a chip
+            minWidth: 24, // Minimum width so "0" still looks like a chip
             padding: "0 8px", // Horizontal padding — fits 1–2 digits well
             display: "flex", // Center number
             alignItems: "center", // Center vertically
             justifyContent: "center", // Center horizontally
             color: colors["text-on-dark"], // White number on tinted chip
-            fontSize: typography.captionSm.size, // Badge size per spec — “Badges = 12px SemiBold”
+            fontSize: typography.captionSm.size, // Badge size per spec — "Badges = 12px SemiBold"
             fontWeight: 700, // SemiBold-ish — matches Figma chip number weight
           }}
         >
@@ -557,7 +557,7 @@ function KanbanColumn({
         </div>
       </div>
 
-      {/* Cards list — scrollable if it grows — matches “scrollable story cards” requirement */}
+      {/* Cards list — scrollable if it grows — matches "scrollable story cards" requirement */}
       <div
         style={{
           display: "flex", // List is a vertical stack of cards
@@ -565,7 +565,7 @@ function KanbanColumn({
           gap: "10px", // Gap between cards — similar to Figma
           overflowY: "auto", // Column becomes scrollable when many cards exist
           maxHeight: "calc(100vh - 220px)", // Keep within viewport under toolbar — avoids page-level overflow
-          paddingRight: "4px", // Small padding so scrollbar doesn’t overlap card shadows
+          paddingRight: "4px", // Small padding so scrollbar doesn't overlap card shadows
         }}
       >
         {stories.map((story) => (
@@ -580,20 +580,20 @@ function KanbanColumn({
   );
 } // End KanbanColumn — reusable per column
 
-// StoryCard — one clickable card — matches the Figma “story-card” component
+// StoryCard — one clickable card — matches the Figma "story-card" component
 function StoryCard({ story, onClick }: { story: Story; onClick: () => void }) {
   return (
     <button
-      type="button" // Ensures this button does not submit anything — it’s just clickable UI
+      type="button" // Ensures this button does not submit anything — it's just clickable UI
       onClick={onClick} // When clicked, open the side panel — required behavior
       style={{
         width: "100%", // Card should fill the column width — matches Figma
         textAlign: "left", // Text aligns left — matches card typography
         backgroundColor: colors["surface-card"], // White background — surface-card token
         border: `1px solid ${colors["border-default"]}`, // Border token — matches Figma borders
-        borderRadius: borderRadius.md, // 8px radius — matches spec “Card border radius = 8px”
+        borderRadius: borderRadius.md, // 8px radius — matches spec "Card border radius = 8px"
         padding: "12px", // Exact card padding per spec — 12px
-        boxShadow: "0px 4px 10px rgba(0,0,0,0.04)", // Subtle shadow — matches Figma’s drop shadow
+        boxShadow: "0px 4px 10px rgba(0,0,0,0.04)", // Subtle shadow — matches Figma's drop shadow
         cursor: "pointer", // Pointer cursor signals clickability — important affordance
         boxSizing: "border-box", // Include padding/border — stable sizing
       }}
@@ -619,9 +619,9 @@ function StoryCard({ story, onClick }: { story: Story; onClick: () => void }) {
       <div
         style={{
           fontSize: typography.bodySm.size, // Exact card title size per spec — 13px
-          fontWeight: 500, // Medium weight per spec — “Card title = 13px Medium”
+          fontWeight: 500, // Medium weight per spec — "Card title = 13px Medium"
           color: colors["text-primary"], // Primary text — #1e293b mapping
-          lineHeight: 1.4, // Matches the frame’s comfortable title wrapping
+          lineHeight: 1.4, // Matches the frame's comfortable title wrapping
           marginBottom: spacing[3], // Space before meta row — consistent with design
         }}
       >
@@ -662,7 +662,7 @@ function StoryCard({ story, onClick }: { story: Story; onClick: () => void }) {
               style={{
                 width: `${story.progressPct}%`, // Fill percentage — driven by data
                 height: "100%", // Fill the track height
-                backgroundColor: "#f59e0b", // Orange fill — matches “In Progress” accent
+                backgroundColor: "#f59e0b", // Orange fill — matches "In Progress" accent
                 borderRadius: borderRadius.full, // Rounded fill edge
               }}
             />
@@ -679,7 +679,7 @@ function StoryCard({ story, onClick }: { story: Story; onClick: () => void }) {
         </div>
       )}
 
-      {/* Done “Completed …” label — only for Done cards */}
+      {/* Done "Completed …" label — only for Done cards */}
       {story.doneLabel && (
         <div
           style={{
@@ -711,7 +711,7 @@ function ToolbarDropdown({ label }: { label: string }) {
         gap: spacing[2], // Space between label and chevron
         color: colors["text-primary"], // Primary text — readable
         fontSize: typography.bodySm.size, // Matches the toolbar label size shown in design context
-        fontWeight: 500, // Medium — matches the frame’s feel
+        fontWeight: 500, // Medium — matches the frame's feel
         cursor: "pointer", // Pointer cursor — clickable affordance
       }}
     >
@@ -726,7 +726,7 @@ function PillBadge({
   label,
   colors: badgeColors,
 }: {
-  label: string; // Badge text — e.g. “Bug”, “Critical”, “AI Generated”
+  label: string; // Badge text — e.g. "Bug", "Critical", "AI Generated"
   colors: { bg: string; fg: string }; // Background and foreground colors — exact mapping from rules
 }) {
   return (
@@ -761,7 +761,7 @@ function priorityBadgeColors(priority: Story["priority"]): { bg: string; fg: str
 const metaDotTextStyle: React.CSSProperties = {
   fontSize: typography.monoSm.size, // Meta text size — matches the design context
   color: colors["text-tertiary"], // Tertiary text — less emphasis than client chip
-  whiteSpace: "nowrap", // Keep “· Sprint 14” on one line where possible
+  whiteSpace: "nowrap", // Keep "· Sprint 14" on one line where possible
 }; // End meta dot style
 
 const syncButtonStyle: React.CSSProperties = {
@@ -779,7 +779,7 @@ const newButtonStyle: React.CSSProperties = {
   padding: "10px 16px", // Same sizing as Sync button
   backgroundColor: colors["brand-blue"], // Solid brand blue — maps #0088ff
   border: "none", // No border for primary button
-  borderRadius: borderRadius.xl, // Slightly rounder like Figma “New +” (12px)
+  borderRadius: borderRadius.xl, // Slightly rounder like Figma "New +" (12px)
   color: colors["text-on-dark"], // White text on blue — matches token
   fontSize: typography.captionSm.size, // Button label size
   fontWeight: 600, // SemiBold label weight

@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────
 // SettingsPage — workspace and integration configuration
-// Built to match DeliveryPulse Figma “Settings” layout + user specs
+// Built to match DeliveryPulse Figma "Settings" layout + user specs
 // ─────────────────────────────────────────────
 
-import { useEffect, useMemo, useState, type CSSProperties } from “react”;
-import { useLocation, useNavigate, useSearchParams } from “react-router-dom”;
-import { AlertTriangle, Check, Slack } from “lucide-react”; // Icons for status/error affordances — consistent with the app icon set
-import AppShell from “../../components/layout/AppShell”; // AppShell wraps sidebar + topnav — pageTitle becomes “Settings”
-import api from “../../api/axios”; // Shared axios instance — baseURL is already VITE_API_URL/api
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { AlertTriangle, Check, Slack } from "lucide-react"; // Icons for status/error affordances — consistent with the app icon set
+import AppShell from "../../components/layout/AppShell"; // AppShell wraps sidebar + topnav — pageTitle becomes "Settings"
+import api from "../../api/axios"; // Shared axios instance — baseURL is already VITE_API_URL/api
 import {
   disconnectSlackWorkspace,
   getSlackChannels,
@@ -17,7 +17,7 @@ import {
   type SlackChannelItem,
   type SlackClientOption,
   type SlackWorkspaceSummary,
-} from “../../api/slack.integration.api”;
+} from "../../api/slack.integration.api";
 import { borderRadius, colors, spacing, typography } from "../../styles/tokens"; // Tokens ensure every color/spacing matches DeliveryPulse
 
 // ── Types ────────────────────────────────────────────────────
