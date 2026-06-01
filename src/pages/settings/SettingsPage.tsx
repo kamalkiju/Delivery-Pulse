@@ -9,9 +9,13 @@ import { AlertTriangle, Check, Slack } from "lucide-react"; // Icons for status/
 import AppShell from "../../components/layout/AppShell"; // AppShell wraps sidebar + topnav — pageTitle becomes “Settings”
 import {
   disconnectSlackWorkspace,
+  getSlackChannels,
   getSlackConnectUrl,
   getSlackStatus,
   getSlackWorkspaces,
+  updateSlackChannel,
+  type SlackChannelItem,
+  type SlackClientOption,
   type SlackWorkspaceSummary,
 } from "../../api/slack.integration.api";
 import { borderRadius, colors, spacing, typography } from "../../styles/tokens"; // Tokens ensure every color/spacing matches DeliveryPulse
@@ -37,25 +41,13 @@ interface NavItem {
   icon: string; // Emoji icon per spec — simple, designer-friendly
 }
 
-interface ChannelRow {
-  channel: string; // Slack channel name
-  client: string; // Client mapped to channel
-  lastMsg: string; // Last message time text
-}
-
 interface RoleRow {
   name: string; // Person name
   username: string; // Slack username
   role: string; // Team role label
 }
 
-// ── Static data for the Slack Setup view ─────────────────────
-
-const monitoredChannels: ChannelRow[] = [
-  { channel: "#client-techcorp", client: "TechCorp Ltd", lastMsg: "10 min ago" },
-  { channel: "#client-globalretail", client: "GlobalRetail", lastMsg: "1 hr ago" },
-  { channel: "#client-startupxyz", client: "StartupXYZ", lastMsg: "8 hrs ago" },
-]; // Table rows per spec — shows monitored client channels
+// ── Static data (role mapping only — channels loaded from API) ────────────────
 
 const roleMapping: RoleRow[] = [
   { name: "Vijay M", username: "@vijay.m", role: "Project Manager" },
@@ -81,6 +73,23 @@ export default function SettingsPage() {
   const [slackWorkspaces, setSlackWorkspaces] = useState<SlackWorkspaceSummary[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
+  // ── Real channel data loaded from API ───────────────────────
+  const [channels, setChannels] = useState<SlackChannelItem[]>([]);
+  const [clients, setClients] = useState<SlackClientOption[]>([]);
+  const [channelsLoading, setChannelsLoading] = useState(false);
+
+  // loadChannels — fetch channels + clients for the given workspace
+  const loadChannels = (workspaceId: string) => {
+    setChannelsLoading(true);
+    getSlackChannels(workspaceId)
+      .then(({ channels: ch, clients: cl }) => {
+        setChannels(ch);
+        setClients(cl);
+      })
+      .catch(() => {})
+      .finally(() => setChannelsLoading(false));
+  };
+
   const loadSlackStatus = () => {
     Promise.all([getSlackStatus(), getSlackWorkspaces()])
       .then(([s, workspaces]) => {
@@ -88,8 +97,14 @@ export default function SettingsPage() {
         setSlackTeamName(s.teamName);
         setSlackTeamId(s.teamId);
         setSlackWorkspaces(workspaces);
+        // Resolve the workspace to load channels for
+        const wsId = activeWorkspaceId ?? workspaces[0]?.id ?? null;
         if (!activeWorkspaceId && workspaces[0]?.id) {
           setActiveWorkspaceId(workspaces[0].id);
+        }
+        // Auto-load channels when connected
+        if (s.connected && wsId) {
+          loadChannels(wsId);
         }
       })
       .catch(() => {});
@@ -438,23 +453,101 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* SECTION — Client Channels Monitored */}
-              <div style={sectionTitle}>Client Channels Monitored</div>
-              <SettingsTable
-                columns={["CHANNEL", "CLIENT", "STATUS", "LAST MSG", "ACTIONS"]}
-                rows={monitoredChannels.map((row) => [
-                  row.channel,
-                  row.client,
-                  <span key="status" style={{ color: colors["success-dark"], fontWeight: 600 }}>
-                    Active
-                  </span>,
-                  row.lastMsg,
-                  <span key="actions" style={{ color: colors["brand-blue"], fontWeight: 600 }}>
-                    Edit · Remove
-                  </span>,
-                ])}
-                footerLink="+ Add Channel"
-              />
+              {/* SECTION — Client Channels (real data from API) */}
+              {slackConnected && (
+                <div style={{ marginBottom: spacing[5] }}>
+                  {/* Section header with inline Refresh button */}
+                  <div
+                    style={{
+                      ...sectionTitle,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: spacing[2],
+                    }}
+                  >
+                    <span>Client Channels</span>
+                    <button
+                      type="button"
+                      style={{ ...ghostBtn, height: 28, fontSize: "12px" }}
+                      onClick={() => activeWorkspaceId && loadChannels(activeWorkspaceId)}
+                    >
+                      Refresh
+                    </button>
+                  </div>
+
+                  {/* Loading state */}
+                  {channelsLoading && (
+                    <div
+                      style={{
+                        padding: spacing[4],
+                        color: colors["text-secondary"],
+                        fontSize: typography.bodySm.size,
+                      }}
+                    >
+                      Loading channels…
+                    </div>
+                  )}
+
+                  {/* Empty state */}
+                  {!channelsLoading && channels.length === 0 && (
+                    <div
+                      style={{
+                        backgroundColor: colors["surface-subtle"],
+                        border: `1px solid ${colors["border-default"]}`,
+                        borderRadius: borderRadius.md,
+                        padding: spacing[5],
+                        color: colors["text-secondary"],
+                        fontSize: typography.bodySm.size,
+                        textAlign: "center",
+                      }}
+                    >
+                      No channels found. Invite the DeliveryPulse bot to your client channels and click Refresh.
+                    </div>
+                  )}
+
+                  {/* Channels list */}
+                  {!channelsLoading && channels.length > 0 && (
+                    <div
+                      style={{
+                        backgroundColor: colors["surface-card"],
+                        border: `1px solid ${colors["border-default"]}`,
+                        borderRadius: borderRadius.md,
+                        overflow: "hidden",
+                      }}
+                    >
+                      {/* Table header */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 180px 60px",
+                          padding: "10px 16px",
+                          backgroundColor: colors["surface-subtle"],
+                          borderBottom: `1px solid ${colors["border-default"]}`,
+                        }}
+                      >
+                        <span style={tableHeaderCell}>CHANNEL</span>
+                        <span style={tableHeaderCell}>CLIENT</span>
+                        <span style={tableHeaderCell}>MONITOR</span>
+                      </div>
+
+                      {/* One row per channel — toggle + client dropdown */}
+                      {channels.map((ch) => (
+                        <ChannelToggleRow
+                          key={ch.id}
+                          channel={ch}
+                          clients={clients}
+                          onUpdate={(updated) =>
+                            setChannels((prev) =>
+                              prev.map((c) => (c.id === updated.id ? updated : c)),
+                            )
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* SECTION — Team Role Mapping */}
               <div style={{ ...sectionTitle, marginTop: spacing[5] }}>Team Role Mapping</div>
@@ -716,6 +809,163 @@ export default function SettingsPage() {
         </section>
       </div>
     </AppShell>
+  );
+}
+
+// ── ChannelToggleRow — one row in the Client Channels list ───
+//
+// Props:
+//   channel  — SlackChannelItem from the API
+//   clients  — list of client options for the dropdown
+//   onUpdate — called with the optimistically-updated channel (reverted on API error)
+
+function ChannelToggleRow({
+  channel,
+  clients,
+  onUpdate,
+}: {
+  channel: SlackChannelItem;
+  clients: SlackClientOption[];
+  onUpdate: (updated: SlackChannelItem) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  // Toggle monitoring ON/OFF — optimistic update, revert on API error
+  const toggle = async (isOn: boolean) => {
+    const optimistic: SlackChannelItem = {
+      ...channel,
+      isClientChannel: isOn,
+      // Clear client assignment when turning OFF so UI is clean
+      clientId: isOn ? channel.clientId : null,
+      clientName: isOn ? channel.clientName : null,
+    };
+    onUpdate(optimistic);
+    setSaving(true);
+    try {
+      await updateSlackChannel(channel.id, {
+        isClientChannel: isOn,
+        clientId: isOn ? channel.clientId : null,
+      });
+    } catch {
+      onUpdate(channel); // Revert optimistic update on failure
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Assign a client to the monitored channel
+  const assignClient = async (clientId: string | null) => {
+    const client = clients.find((c) => c.id === clientId) ?? null;
+    const optimistic: SlackChannelItem = {
+      ...channel,
+      clientId,
+      clientName: client?.name ?? null,
+    };
+    onUpdate(optimistic);
+    setSaving(true);
+    try {
+      await updateSlackChannel(channel.id, {
+        isClientChannel: channel.isClientChannel,
+        clientId,
+      });
+    } catch {
+      onUpdate(channel); // Revert on failure
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 180px 60px",
+        alignItems: "center",
+        padding: "0 16px",
+        height: 52, // Spec: 52px row height
+        borderBottom: `1px solid ${colors["border-default"]}`,
+        opacity: saving ? 0.6 : 1,
+        transition: "opacity 0.15s",
+      }}
+    >
+      {/* Channel name */}
+      <span
+        style={{
+          fontSize: typography.bodySm.size,
+          color: colors["text-primary"],
+          fontWeight: 500,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        #{channel.channelName}
+      </span>
+
+      {/* Client dropdown — only visible when monitoring is ON */}
+      {channel.isClientChannel ? (
+        <select
+          value={channel.clientId ?? ""}
+          disabled={saving}
+          onChange={(e) => assignClient(e.target.value || null)}
+          style={{
+            height: 32,
+            borderRadius: borderRadius.sm,
+            border: `1px solid ${colors["border-default"]}`,
+            fontSize: typography.captionSm.size,
+            padding: `0 ${spacing[2]}`,
+            color: colors["text-primary"],
+            background: colors["surface-card"],
+            maxWidth: 168,
+            width: "100%",
+          }}
+        >
+          <option value="">— select client —</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span style={{ fontSize: typography.captionSm.size, color: colors["text-tertiary"] }}>
+          —
+        </span>
+      )}
+
+      {/* Toggle switch — green when ON, gray when OFF */}
+      <button
+        type="button"
+        disabled={saving}
+        onClick={() => toggle(!channel.isClientChannel)}
+        style={{
+          width: 40,
+          height: 22,
+          borderRadius: borderRadius.full,
+          border: "none",
+          cursor: saving ? "not-allowed" : "pointer",
+          backgroundColor: channel.isClientChannel
+            ? colors.success // ON — green #10b981
+            : colors["border-light"], // OFF — gray #cbd5e1
+          position: "relative",
+          flexShrink: 0,
+        }}
+        aria-label={`${channel.isClientChannel ? "Stop" : "Start"} monitoring #${channel.channelName}`}
+      >
+        <span
+          style={{
+            width: 18,
+            height: 18,
+            borderRadius: borderRadius.full,
+            backgroundColor: colors["surface-card"],
+            position: "absolute",
+            top: 2,
+            left: channel.isClientChannel ? 20 : 2, // Slide dot right when ON
+            transition: "left 0.15s ease",
+          }}
+        />
+      </button>
+    </div>
   );
 }
 
