@@ -19,6 +19,7 @@ import {
   setActiveWorkspaceId,
   WORKSPACE_SWITCHER_OPEN_EVENT,
 } from "../../utils/workspace";
+import { switchSlackWorkspace } from "../../api/slack.integration.api";
 import { borderRadius, colors, layout, spacing } from "../../styles/tokens";
 
 /** First two letters of workspace name for the circular icon fallback */
@@ -98,11 +99,12 @@ const SidebarWorkspaceSwitcher = () => {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [isDropdownOpen]);
 
-  // switchWorkspace — persist, dispatch workspace-changed, close menu
+  // switchWorkspace — persist, dispatch workspace-changed, close menu, call backend
   const switchWorkspace = (workspaceId: string) => {
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceIdState(workspaceId);
     setIsDropdownOpen(false);
+    switchSlackWorkspace(workspaceId).catch(() => {/* best-effort */});
   };
 
   // Placeholder row while workspaces load
@@ -135,7 +137,7 @@ const SidebarWorkspaceSwitcher = () => {
       >
         <button
           type="button"
-          onClick={() => navigate("/onboarding?step=3")}
+          onClick={() => navigate("/settings?tab=slack")}
           style={triggerButtonStyle}
           title="Connect Slack workspace"
         >
@@ -215,7 +217,7 @@ const SidebarWorkspaceSwitcher = () => {
           }}
         >
           {/* Header */}
-          <div style={dropdownHeaderStyle}>Your workspaces</div>
+          <div style={dropdownHeaderStyle}>Switch Workspace</div>
 
           {/* Workspace list — each row 44px; checkmark on active */}
           {workspaces.map((ws) => {
@@ -256,12 +258,12 @@ const SidebarWorkspaceSwitcher = () => {
             }}
           />
 
-          {/* Add workspace — onboarding step 3 (Slack connect) */}
+          {/* Add workspace — navigate to Settings Slack tab */}
           <button
             type="button"
             onClick={() => {
               setIsDropdownOpen(false);
-              navigate("/onboarding?step=3");
+              navigate("/settings?tab=slack");
             }}
             style={addWorkspaceRowStyle}
             onMouseEnter={(e) => {
@@ -298,7 +300,7 @@ function WorkspaceIcon({
         borderRadius: borderRadius.full,
         flexShrink: 0,
         backgroundColor: onDark
-          ? "rgba(255,255,255,0.15)"
+          ? "#0088ff"
           : colors["surface-subtle"],
         display: "flex",
         alignItems: "center",
