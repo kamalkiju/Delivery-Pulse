@@ -526,12 +526,14 @@ export async function getWorkspaces(req, res) {
           isClientChannel: true,
         });
         return {
+          _id: ws._id.toString(),
           id: ws._id.toString(),
           teamId: ws.teamId,
           teamName: ws.teamName,
           teamDomain: ws.teamDomain,
           teamIcon: ws.teamIcon,
           connectedAt: ws.connectedAt,
+          isActive: ws.isActive,
           channelCount,
         };
       }),
@@ -547,6 +549,56 @@ export async function getWorkspaces(req, res) {
     return res.status(500).json({
       success: false,
       message: error.message ?? "Failed to load workspaces",
+    });
+  }
+}
+
+// ── FUNCTION 4b — POST /api/slack/workspaces/:workspaceId/switch ─────────────
+
+// used when user switches active workspace in the app
+export async function switchWorkspace(req, res) {
+  try {
+    const organisationId = req.user?.orgId ?? req.user?.organisationId;
+    const { workspaceId } = req.params;
+
+    if (!organisationId) {
+      return res.status(400).json({ success: false, message: "Missing organisation" });
+    }
+
+    const target = await SlackWorkspace.findOne({
+      _id: workspaceId,
+      organisationId,
+    });
+
+    if (!target) {
+      return res.status(404).json({ success: false, message: "Workspace not found" });
+    }
+
+    await SlackWorkspace.updateMany(
+      { organisationId, _id: { $ne: target._id } },
+      { $set: { isActive: false } },
+    );
+
+    target.isActive = true;
+    await target.save();
+
+    return res.json({
+      success: true,
+      workspace: {
+        _id: target._id.toString(),
+        id: target._id.toString(),
+        teamId: target.teamId,
+        teamName: target.teamName,
+        teamIcon: target.teamIcon,
+        connectedAt: target.connectedAt,
+        isActive: target.isActive,
+      },
+    });
+  } catch (error) {
+    console.error("[slack-oauth] switchWorkspace:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message ?? "Failed to switch workspace",
     });
   }
 }

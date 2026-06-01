@@ -13,6 +13,7 @@ import {
   callback,
   getStatus,
   getWorkspaces,
+  switchWorkspace,
   getChannels,
   getChannelsLegacy,
   updateChannel,
@@ -37,6 +38,7 @@ router.get("/callback", callback);
 // ── Workspace & channel management (authenticated) ───────────────────────────
 router.get("/status", authMiddleware, getStatus);
 router.get("/workspaces", authMiddleware, getWorkspaces);
+router.post("/workspaces/:workspaceId/switch", authMiddleware, switchWorkspace);
 router.get("/channels", authMiddleware, getChannelsLegacy);
 router.get("/workspaces/:workspaceId/channels", authMiddleware, getChannels);
 router.patch("/channels/:channelId", authMiddleware, updateChannel);
