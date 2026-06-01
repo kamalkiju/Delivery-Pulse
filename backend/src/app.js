@@ -47,11 +47,48 @@ const app = express();
 // Security headers — disable CSP (API-only server; CSP on :5000 confuses browser DevTools)
 app.use(helmet({ contentSecurityPolicy: false }));
 
-// Allow browser requests from the Vite frontend (FRONTEND_URL in .env)
+// Explicit list of trusted origins — add new Vercel URLs here as needed
+const allowedOrigins = [
+  "https://delivery-pulse-tau.vercel.app",  // primary production deployment
+  "https://delivery-pulse.vercel.app",       // alternate production URL
+  process.env.FRONTEND_URL,                  // override from .env (e.g. custom domain)
+  "http://localhost:5173",                   // Vite dev server
+  "http://localhost:3000",                   // CRA / other local dev server
+];
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    // origin is called by the browser's preflight (OPTIONS) and real requests
+    origin: function (origin, callback) {
+      // Non-browser requests (curl, Postman, server-to-server) send no Origin header
+      if (!origin) return callback(null, true);
+
+      // Exact match against the allow-list
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        return callback(null, true);
+      }
+
+      // Allow ALL Vercel preview deployments (*.vercel.app) automatically
+      // so feature-branch previews work without touching this file
+      if (origin.includes("vercel.app")) {
+        return callback(null, true);
+      }
+
+      // Anything else is blocked
+      return callback(new Error("CORS not allowed"));
+    },
+
+    // Required for cookies / Authorization headers to be sent cross-origin
     credentials: true,
+
+    // Explicitly list allowed HTTP methods (browser sends these in preflight)
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+
+    // Headers the frontend is allowed to send:
+    //   Content-Type    — JSON bodies
+    //   Authorization   — Bearer JWT token
+    //   x-workspace-id  — active Slack workspace (multi-tenant scoping)
+    allowedHeaders: ["Content-Type", "Authorization", "x-workspace-id"],
   }),
 );
 
