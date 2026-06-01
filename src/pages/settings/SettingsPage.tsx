@@ -125,6 +125,16 @@ export default function SettingsPage() {
     loadSlackStatus();
   }, []);
 
+  // When the user finishes OAuth in the new tab and switches back to this tab,
+  // reload the workspace list automatically so the new workspace appears.
+  useEffect(() => {
+    const onFocus = () => {
+      if (activeSection === "slack-setup") loadSlackStatus();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [activeSection]);
+
   useEffect(() => {
     const connected = searchParams.get("connected");
     const slackConnected = searchParams.get("slack_connected");
@@ -148,7 +158,9 @@ export default function SettingsPage() {
   const handleConnectSlack = async () => {
     try {
       const connectUrl = await getSlackConnectInit("settings");
-      window.location.href = connectUrl;
+      // Open in a new tab so Slack's workspace-picker JavaScript
+      // runs in a clean browsing context (avoids workspace dropdown issues).
+      window.open(connectUrl, "_blank", "noopener,noreferrer");
     } catch {
       setSlackNotice("Failed to connect Slack. Please try again.");
     }

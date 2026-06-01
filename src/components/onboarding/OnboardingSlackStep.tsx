@@ -150,7 +150,8 @@ export default function OnboardingSlackStep({
     setIsConnecting(true);
     try {
       const response = await api.get("/slack/connect-init");
-      window.location.href = response.data.connectUrl;
+      // Open in new tab — keeps Slack's workspace picker working correctly
+      window.open(response.data.connectUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
       console.error("Failed to initiate Slack connect:", error);
       setIsConnecting(false);
