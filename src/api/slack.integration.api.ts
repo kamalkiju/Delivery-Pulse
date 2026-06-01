@@ -128,6 +128,10 @@ export async function getSlackChannels(workspaceId?: string): Promise<{
   };
 }
 
+export async function switchSlackWorkspace(workspaceId: string): Promise<void> {
+  await api.post(`/slack/workspaces/${workspaceId}/switch`);
+}
+
 export async function mapSlackChannels(
   mappings: Array<{ id?: string; channelId: string; clientId: string }>,
 ): Promise<{ monitoredChannelCount: number }> {

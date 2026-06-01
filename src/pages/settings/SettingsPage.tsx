@@ -6,13 +6,14 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Check, Slack } from "lucide-react"; // Icons for status/error affordances - consistent with the app icon set
-import AppShell from "../../components/layout/AppShell"; // AppShell wraps sidebar + topnav - pageTitle becomes "Settings"
-import api from "../../api/axios"; // Shared axios instance - baseURL is already VITE_API_URL/api
+import AppShell from "../../components/layout/AppShell";
 import {
   disconnectSlackWorkspace,
   getSlackChannels,
   getSlackStatus,
   getSlackWorkspaces,
+  getSlackConnectInit,
+  switchSlackWorkspace,
   updateSlackChannel,
   type SlackChannelItem,
   type SlackClientOption,
@@ -47,6 +48,17 @@ interface RoleRow {
   role: string; // Team role label
 }
 
+function formatRelativeDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const diffMs = Date.now() - date.getTime();
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days === 0) return "today";
+  if (days === 1) return "1 day ago";
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? "1 month ago" : `${months} months ago`;
+}
+
 // ── Static data (role mapping only - channels loaded from API) ────────────────
 
 const roleMapping: RoleRow[] = [
@@ -66,17 +78,19 @@ export default function SettingsPage() {
     location.pathname.includes("/settings/slack") ? "slack-setup" : "slack-setup",
   );
 
-  const [slackConnected, setSlackConnected] = useState(false);
-  const [slackTeamName, setSlackTeamName] = useState<string | null>(null);
-  const [slackTeamId, setSlackTeamId] = useState<string | null>(null);
   const [slackNotice, setSlackNotice] = useState<string | null>(null);
   const [slackWorkspaces, setSlackWorkspaces] = useState<SlackWorkspaceSummary[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
+  const [workspacesLoading, setWorkspacesLoading] = useState(false);
 
   // ── Real channel data loaded from API ───────────────────────
   const [channels, setChannels] = useState<SlackChannelItem[]>([]);
   const [clients, setClients] = useState<SlackClientOption[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
+  const [channelSearch, setChannelSearch] = useState("");
+
+  const slackConnected = slackWorkspaces.length > 0;
+  const activeWorkspace = slackWorkspaces.find((w) => w.id === activeWorkspaceId) ?? slackWorkspaces[0] ?? null;
 
   // loadChannels - fetch channels + clients for the given workspace
   const loadChannels = (workspaceId: string) => {
@@ -91,23 +105,20 @@ export default function SettingsPage() {
   };
 
   const loadSlackStatus = () => {
+    setWorkspacesLoading(true);
     Promise.all([getSlackStatus(), getSlackWorkspaces()])
       .then(([s, workspaces]) => {
-        setSlackConnected(s.connected);
-        setSlackTeamName(s.teamName);
-        setSlackTeamId(s.teamId);
         setSlackWorkspaces(workspaces);
-        // Resolve the workspace to load channels for
         const wsId = activeWorkspaceId ?? workspaces[0]?.id ?? null;
         if (!activeWorkspaceId && workspaces[0]?.id) {
           setActiveWorkspaceId(workspaces[0].id);
         }
-        // Auto-load channels when connected
         if (s.connected && wsId) {
           loadChannels(wsId);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setWorkspacesLoading(false));
   };
 
   useEffect(() => {
@@ -119,8 +130,6 @@ export default function SettingsPage() {
     const slackConnected = searchParams.get("slack_connected");
     const workspace = searchParams.get("workspace");
     if (connected === "true" || slackConnected === "true" || searchParams.get("slack") === "connected") {
-      setSlackConnected(true);
-      if (workspace) setSlackTeamName(workspace);
       const wsId = searchParams.get("workspaceId");
       if (wsId) setActiveWorkspaceId(wsId);
       setSlackNotice(`Slack connected${workspace ? ` to ${workspace}` : ""}.`);
@@ -136,29 +145,38 @@ export default function SettingsPage() {
     }
   }, [searchParams, navigate]);
 
-  // Step 1: GET /api/slack/connect-init - authenticated (axios adds JWT header automatically)
-  // Step 2: redirect browser to the one-time connect URL returned by the backend
-  // No token is ever appended to the URL manually.
   const handleConnectSlack = async () => {
     try {
-      const response = await api.get("/slack/connect-init");
-      window.location.href = response.data.connectUrl;
-    } catch (error) {
-      console.error("Failed to initiate Slack connect:", error);
+      const connectUrl = await getSlackConnectInit("settings");
+      window.location.href = connectUrl;
+    } catch {
       setSlackNotice("Failed to connect Slack. Please try again.");
     }
   };
 
-  const handleDisconnectSlack = async () => {
-    const wsId = activeWorkspaceId ?? slackWorkspaces[0]?.id;
-    if (!wsId) return;
+  const handleDisconnectWorkspace = async (wsId: string) => {
     try {
       await disconnectSlackWorkspace(wsId);
+      setSlackWorkspaces((prev) => prev.filter((w) => w.id !== wsId));
+      if (activeWorkspaceId === wsId) {
+        const remaining = slackWorkspaces.filter((w) => w.id !== wsId);
+        const next = remaining[0]?.id ?? null;
+        setActiveWorkspaceId(next);
+        if (next) loadChannels(next);
+        else { setChannels([]); setClients([]); }
+      }
       setSlackNotice("Workspace disconnected.");
-      loadSlackStatus();
     } catch {
-      setSlackNotice("Could not disconnect Slack.");
+      setSlackNotice("Could not disconnect workspace.");
     }
+  };
+
+  const handleSwitchWorkspace = async (wsId: string) => {
+    setActiveWorkspaceId(wsId);
+    try {
+      await switchSlackWorkspace(wsId);
+    } catch { /* best-effort */ }
+    loadChannels(wsId);
   };
 
   // autoReplyEnabled - toggles the auto-reply switch and the textarea enablement
@@ -357,308 +375,383 @@ export default function SettingsPage() {
                 </p>
               )}
 
-              {/* CONNECTION CARD */}
-              <div
-                style={{
-                  backgroundColor: slackConnected ? "#f0fdf4" : colors["surface-card"],
-                  border: `1px solid ${slackConnected ? "#bbf7d0" : colors["border-default"]}`,
-                  borderRadius: borderRadius.lg, // Spec: radius 10px
-                  padding: spacing[4], // Spec: 16px
-                  marginBottom: spacing[5], // Spec: margin-bottom 20px
-                  display: "flex", // Layout: icon + info + buttons
-                  alignItems: "center", // Center vertically
-                  gap: spacing[3], // Spec: gap 12px
-                }}
-              >
-                {/* Slack icon circle */}
+              {/* ── NO WORKSPACE STATE ───────────────────────── */}
+              {!workspacesLoading && !slackConnected && (
                 <div
                   style={{
-                    width: 40, // Spec: 40px
-                    height: 40,
-                    borderRadius: borderRadius.full, // Circle
-                    backgroundColor: "#dcfce7", // Spec: bg #dcfce7
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
+                    backgroundColor: colors["surface-card"],
+                    border: `1px solid ${colors["border-default"]}`,
+                    borderRadius: borderRadius.lg,
+                    padding: spacing[6],
+                    maxWidth: 520,
+                    textAlign: "center",
                   }}
-                  aria-hidden
                 >
-                  <Slack size={20} color={colors["success-dark"]} />
-                </div>
-
-                {/* Left info */}
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: "14px", fontWeight: 700, color: colors["text-primary"] }}>
-                    {slackConnected && slackTeamName
-                      ? `Connected to ${slackTeamName}`
-                      : "Not connected"}
-                  </div>
                   <div
                     style={{
-                      fontSize: typography.captionSm.size,
-                      color: slackConnected
-                        ? colors["success-dark"]
-                        : colors["text-secondary"],
-                      marginTop: 2,
-                    }}
-                  >
-                    {slackConnected
-                      ? `${slackTeamId ?? "workspace"} · Bot: DeliveryPulse`
-                      : "Connect your workspace to ingest client messages"}
-                  </div>
-                  {slackConnected && (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: spacing[2],
-                        marginTop: spacing[2],
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: borderRadius.full,
-                          backgroundColor: colors["success-dark"],
-                        }}
-                      />
-                      <span
-                        style={{
-                          fontSize: typography.monoSm.size,
-                          color: colors["success-dark"],
-                          fontWeight: 600,
-                        }}
-                      >
-                        Active
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Right buttons */}
-                <div style={{ marginLeft: "auto", display: "flex", gap: spacing[2], flexWrap: "wrap" }}>
-                  {!slackConnected ? (
-                    <button type="button" style={primaryBtn} onClick={handleConnectSlack}>
-                      Connect Slack
-                    </button>
-                  ) : (
-                    <>
-                      <button type="button" style={primaryBtn} onClick={handleConnectSlack}>
-                        Add Workspace
-                      </button>
-                      <button type="button" style={ghostBtn} onClick={loadSlackStatus}>
-                        Refresh
-                      </button>
-                      <button
-                        type="button"
-                        style={disconnectBtn}
-                        onClick={handleDisconnectSlack}
-                      >
-                        Disconnect
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* SECTION - Client Channels (real data from API) */}
-              {slackConnected && (
-                <div style={{ marginBottom: spacing[5] }}>
-                  {/* Section header with inline Refresh button */}
-                  <div
-                    style={{
-                      ...sectionTitle,
+                      width: 56,
+                      height: 56,
+                      borderRadius: borderRadius.full,
+                      backgroundColor: "#f1f5f9",
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "space-between",
-                      marginBottom: spacing[2],
+                      justifyContent: "center",
+                      margin: `0 auto ${spacing[4]}`,
                     }}
                   >
-                    <span>Client Channels</span>
-                    <button
-                      type="button"
-                      style={{ ...ghostBtn, height: 28, fontSize: "12px" }}
-                      onClick={() => activeWorkspaceId && loadChannels(activeWorkspaceId)}
-                    >
-                      Refresh
-                    </button>
+                    <Slack size={28} color="#1c2655" />
                   </div>
-
-                  {/* Loading state */}
-                  {channelsLoading && (
-                    <div
-                      style={{
-                        padding: spacing[4],
-                        color: colors["text-secondary"],
-                        fontSize: typography.bodySm.size,
-                      }}
-                    >
-                      Loading channels…
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: colors["text-primary"], marginBottom: spacing[2] }}>
+                    Connect your Slack workspace
+                  </div>
+                  <div style={{ fontSize: typography.bodySm.size, color: colors["text-secondary"], marginBottom: spacing[4] }}>
+                    Ingest client messages, extract work items with AI, and manage your Review Queue — all from Slack.
+                  </div>
+                  <div
+                    style={{
+                      backgroundColor: colors.canvas,
+                      border: `1px solid ${colors["border-default"]}`,
+                      borderRadius: borderRadius.md,
+                      padding: spacing[4],
+                      marginBottom: spacing[5],
+                      textAlign: "left",
+                    }}
+                  >
+                    <div style={{ fontSize: "13px", fontWeight: 600, color: colors["text-primary"], marginBottom: spacing[2] }}>
+                      What gets connected:
                     </div>
-                  )}
-
-                  {/* Empty state */}
-                  {!channelsLoading && channels.length === 0 && (
-                    <div
-                      style={{
-                        backgroundColor: colors["surface-subtle"],
-                        border: `1px solid ${colors["border-default"]}`,
-                        borderRadius: borderRadius.md,
-                        padding: spacing[5],
-                        color: colors["text-secondary"],
-                        fontSize: typography.bodySm.size,
-                        textAlign: "center",
-                      }}
-                    >
-                      No channels found. Invite the DeliveryPulse bot to your client channels and click Refresh.
-                    </div>
-                  )}
-
-                  {/* Channels list */}
-                  {!channelsLoading && channels.length > 0 && (
-                    <div
-                      style={{
-                        backgroundColor: colors["surface-card"],
-                        border: `1px solid ${colors["border-default"]}`,
-                        borderRadius: borderRadius.md,
-                        overflow: "hidden",
-                      }}
-                    >
-                      {/* Table header */}
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 180px 60px",
-                          padding: "10px 16px",
-                          backgroundColor: colors["surface-subtle"],
-                          borderBottom: `1px solid ${colors["border-default"]}`,
-                        }}
-                      >
-                        <span style={tableHeaderCell}>CHANNEL</span>
-                        <span style={tableHeaderCell}>CLIENT</span>
-                        <span style={tableHeaderCell}>MONITOR</span>
+                    {["Client channels you select", "AI story extraction from messages", "Auto-reply acknowledgements"].map((item) => (
+                      <div key={item} style={{ display: "flex", alignItems: "center", gap: spacing[2], marginBottom: 6 }}>
+                        <Check size={14} color={colors["success-dark"]} />
+                        <span style={{ fontSize: typography.bodySm.size, color: colors["text-secondary"] }}>{item}</span>
                       </div>
-
-                      {/* One row per channel - toggle + client dropdown */}
-                      {channels.map((ch) => (
-                        <ChannelToggleRow
-                          key={ch.id}
-                          channel={ch}
-                          clients={clients}
-                          onUpdate={(updated) =>
-                            setChannels((prev) =>
-                              prev.map((c) => (c.id === updated.id ? updated : c)),
-                            )
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
+                    ))}
+                  </div>
+                  <button type="button" style={{ ...primaryBtn, width: "100%" }} onClick={handleConnectSlack}>
+                    Connect Slack Workspace
+                  </button>
                 </div>
               )}
 
-              {/* SECTION - Team Role Mapping */}
-              <div style={{ ...sectionTitle, marginTop: spacing[5] }}>Team Role Mapping</div>
-              <SettingsTable
-                columns={["NAME", "SLACK USERNAME", "ROLE", "ACTIONS"]}
-                rows={roleMapping.map((r) => [
-                  r.name,
-                  r.username,
-                  r.role,
-                  <span key="edit" style={{ color: colors["brand-blue"], fontWeight: 600 }}>
-                    Edit
-                  </span>,
-                ])}
-                footerLink="+ Add Member"
-              />
+              {/* ── CONNECTED STATE ──────────────────────────── */}
+              {slackConnected && (
+                <>
+                  {/* WORKSPACE SWITCHER — show only when 2+ workspaces */}
+                  {slackWorkspaces.length >= 2 && (
+                    <div style={{ marginBottom: spacing[5] }}>
+                      <div
+                        style={{
+                          fontSize: "12px",
+                          color: colors["text-tertiary"],
+                          marginBottom: spacing[2],
+                          fontWeight: 500,
+                        }}
+                      >
+                        Your Workspaces
+                      </div>
+                      <select
+                        value={activeWorkspace?.id ?? ""}
+                        onChange={(e) => handleSwitchWorkspace(e.target.value)}
+                        style={{
+                          width: "100%",
+                          height: 40,
+                          borderRadius: "8px",
+                          border: `1px solid ${colors["border-default"]}`,
+                          backgroundColor: colors["surface-card"],
+                          fontSize: typography.bodySm.size,
+                          padding: `0 ${spacing[3]}`,
+                          color: colors["text-primary"],
+                          cursor: "pointer",
+                        }}
+                      >
+                        {slackWorkspaces.map((ws) => (
+                          <option key={ws.id} value={ws.id}>
+                            {ws.teamName} — Connected {formatRelativeDate(ws.connectedAt)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
-              {/* SECTION - Auto-Reply Settings */}
-              <div style={{ ...sectionTitle, marginTop: spacing[5] }}>Auto-Reply Settings</div>
-
-              {/* Toggle row */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  backgroundColor: colors["surface-subtle"],
-                  border: `1px solid ${colors["border-default"]}`,
-                  borderRadius: borderRadius.md,
-                  padding: `12px 16px`,
-                  marginBottom: spacing[3],
-                  gap: spacing[3],
-                  flexWrap: "wrap",
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: typography.bodySm.size, fontWeight: 700, color: colors["text-primary"] }}>
-                    Send auto-acknowledgement to clients
-                  </div>
-                  <div style={{ fontSize: typography.captionSm.size, color: colors["text-secondary"], marginTop: 2 }}>
-                    Instant reply when client message is received
-                  </div>
-                </div>
-
-                {/* Toggle switch */}
-                <button
-                  type="button"
-                  onClick={() => setAutoReplyEnabled((v) => !v)}
-                  style={{
-                    width: 40,
-                    height: 22,
-                    borderRadius: borderRadius.full,
-                    border: "none",
-                    cursor: "pointer",
-                    backgroundColor: autoReplyEnabled
-                      ? colors.success // ON bg #10b981
-                      : colors["border-light"], // OFF bg #cbd5e1
-                    position: "relative",
-                    flexShrink: 0,
-                  }}
-                  aria-label="Toggle auto-reply"
-                >
-                  <span
+                  {/* ADD ANOTHER WORKSPACE button */}
+                  <button
+                    type="button"
                     style={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: borderRadius.full,
-                      backgroundColor: colors["surface-card"],
-                      position: "absolute",
-                      top: 2,
-                      left: autoReplyEnabled ? 20 : 2, // Dot position per spec
-                      transition: "left 0.15s ease",
+                      ...ghostBtn,
+                      marginBottom: spacing[5],
+                      display: "flex",
+                      alignItems: "center",
+                      gap: spacing[2],
+                    }}
+                    onClick={handleConnectSlack}
+                  >
+                    + Add Another Workspace
+                  </button>
+
+                  {/* CONNECTED WORKSPACE CARDS */}
+                  <div style={{ marginBottom: spacing[5] }}>
+                    {slackWorkspaces.map((ws) => (
+                      <div
+                        key={ws.id}
+                        style={{
+                          backgroundColor: "#f0fdf4",
+                          border: `1px solid #bbf7d0`,
+                          borderRadius: borderRadius.lg,
+                          padding: spacing[4],
+                          marginBottom: spacing[3],
+                          display: "flex",
+                          alignItems: "center",
+                          gap: spacing[3],
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: borderRadius.full,
+                            backgroundColor: "#dcfce7",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <Check size={18} color={colors["success-dark"]} />
+                        </div>
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: spacing[2], marginBottom: 2 }}>
+                            <span style={{ fontSize: "14px", fontWeight: 700, color: colors["text-primary"] }}>
+                              {ws.teamName}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                color: colors["success-dark"],
+                                backgroundColor: "#dcfce7",
+                                borderRadius: "4px",
+                                padding: "1px 6px",
+                              }}
+                            >
+                              Connected
+                            </span>
+                          </div>
+                          <div style={{ fontSize: typography.captionSm.size, color: colors["text-secondary"] }}>
+                            Connected {formatRelativeDate(ws.connectedAt)} · {ws.channelCount} channel{ws.channelCount !== 1 ? "s" : ""} available
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          style={disconnectBtn}
+                          onClick={() => handleDisconnectWorkspace(ws.id)}
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* CHANNELS SECTION */}
+                  <div style={{ marginBottom: spacing[5] }}>
+                    <div style={{ marginBottom: spacing[2] }}>
+                      <div style={{ fontSize: "16px", fontWeight: 700, color: colors["text-primary"], marginBottom: 4 }}>
+                        Select Client Channels
+                      </div>
+                      <div style={{ fontSize: typography.bodySm.size, color: colors["text-secondary"] }}>
+                        Choose which channels contain client messages
+                      </div>
+                    </div>
+
+                    {/* Search box */}
+                    <input
+                      type="text"
+                      placeholder="Search channels…"
+                      value={channelSearch}
+                      onChange={(e) => setChannelSearch(e.target.value)}
+                      style={{
+                        width: "100%",
+                        height: 36,
+                        borderRadius: borderRadius.md,
+                        border: `1px solid ${colors["border-default"]}`,
+                        padding: `0 ${spacing[3]}`,
+                        fontSize: typography.bodySm.size,
+                        marginBottom: spacing[3],
+                        boxSizing: "border-box",
+                        backgroundColor: colors["surface-card"],
+                        color: colors["text-primary"],
+                      }}
+                    />
+
+                    {/* Loading state */}
+                    {channelsLoading && (
+                      <div style={{ padding: spacing[4], color: colors["text-secondary"], fontSize: typography.bodySm.size }}>
+                        Loading channels…
+                      </div>
+                    )}
+
+                    {/* Empty state */}
+                    {!channelsLoading && channels.length === 0 && (
+                      <div
+                        style={{
+                          backgroundColor: colors["surface-subtle"],
+                          border: `1px solid ${colors["border-default"]}`,
+                          borderRadius: borderRadius.md,
+                          padding: spacing[5],
+                          color: colors["text-secondary"],
+                          fontSize: typography.bodySm.size,
+                          textAlign: "center",
+                        }}
+                      >
+                        No channels found. Invite the DeliveryPulse bot to your client channels and click Refresh.
+                        <button
+                          type="button"
+                          style={{ ...ghostBtn, display: "block", margin: `${spacing[3]} auto 0` }}
+                          onClick={() => activeWorkspace && loadChannels(activeWorkspace.id)}
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Channels list */}
+                    {!channelsLoading && channels.length > 0 && (
+                      <div
+                        style={{
+                          backgroundColor: colors["surface-card"],
+                          border: `1px solid ${colors["border-default"]}`,
+                          borderRadius: borderRadius.md,
+                          overflow: "hidden",
+                        }}
+                      >
+                        {/* Table header */}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 100px 180px 60px",
+                            padding: "10px 16px",
+                            backgroundColor: colors["surface-subtle"],
+                            borderBottom: `1px solid ${colors["border-default"]}`,
+                          }}
+                        >
+                          <span style={tableHeaderCell}>CHANNEL</span>
+                          <span style={tableHeaderCell}>MEMBERS</span>
+                          <span style={tableHeaderCell}>CLIENT</span>
+                          <span style={tableHeaderCell}>MONITOR</span>
+                        </div>
+
+                        {channels
+                          .filter((ch) =>
+                            channelSearch === "" ||
+                            ch.channelName.toLowerCase().includes(channelSearch.toLowerCase()),
+                          )
+                          .map((ch) => (
+                            <ChannelToggleRow
+                              key={ch.id}
+                              channel={ch}
+                              clients={clients}
+                              onUpdate={(updated) =>
+                                setChannels((prev) =>
+                                  prev.map((c) => (c.id === updated.id ? updated : c)),
+                                )
+                              }
+                            />
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SECTION - Team Role Mapping */}
+                  <div style={{ ...sectionTitle, marginTop: spacing[5] }}>Team Role Mapping</div>
+                  <SettingsTable
+                    columns={["NAME", "SLACK USERNAME", "ROLE", "ACTIONS"]}
+                    rows={roleMapping.map((r) => [
+                      r.name,
+                      r.username,
+                      r.role,
+                      <span key="edit" style={{ color: colors["brand-blue"], fontWeight: 600 }}>
+                        Edit
+                      </span>,
+                    ])}
+                    footerLink="+ Add Member"
+                  />
+
+                  {/* SECTION - Auto-Reply Settings */}
+                  <div style={{ ...sectionTitle, marginTop: spacing[5] }}>Auto-Reply Settings</div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      backgroundColor: colors["surface-subtle"],
+                      border: `1px solid ${colors["border-default"]}`,
+                      borderRadius: borderRadius.md,
+                      padding: `12px 16px`,
+                      marginBottom: spacing[3],
+                      gap: spacing[3],
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: typography.bodySm.size, fontWeight: 700, color: colors["text-primary"] }}>
+                        Send auto-acknowledgement to clients
+                      </div>
+                      <div style={{ fontSize: typography.captionSm.size, color: colors["text-secondary"], marginTop: 2 }}>
+                        Instant reply when client message is received
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAutoReplyEnabled((v) => !v)}
+                      style={{
+                        width: 40,
+                        height: 22,
+                        borderRadius: borderRadius.full,
+                        border: "none",
+                        cursor: "pointer",
+                        backgroundColor: autoReplyEnabled ? colors.success : colors["border-light"],
+                        position: "relative",
+                        flexShrink: 0,
+                      }}
+                      aria-label="Toggle auto-reply"
+                    >
+                      <span
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: borderRadius.full,
+                          backgroundColor: colors["surface-card"],
+                          position: "absolute",
+                          top: 2,
+                          left: autoReplyEnabled ? 20 : 2,
+                          transition: "left 0.15s ease",
+                        }}
+                      />
+                    </button>
+                  </div>
+                  <textarea
+                    defaultValue={`Hi {client_name}, thank you for reaching out.\nYour message has been received and logged as {story_id}...`}
+                    disabled={!autoReplyEnabled}
+                    style={{
+                      width: "100%",
+                      border: `1px solid ${colors["border-default"]}`,
+                      borderRadius: borderRadius.md,
+                      padding: spacing[3],
+                      fontSize: typography.bodySm.size,
+                      height: 80,
+                      marginBottom: spacing[4],
+                      resize: "none",
+                      boxSizing: "border-box",
+                      backgroundColor: autoReplyEnabled ? colors["surface-card"] : colors["surface-subtle"],
+                      color: colors["text-primary"],
                     }}
                   />
-                </button>
-              </div>
-
-              {/* Template textarea */}
-              <textarea
-                defaultValue={`Hi {client_name}, thank you for reaching out.\nYour message has been received and logged as {story_id}...`}
-                disabled={!autoReplyEnabled}
-                style={{
-                  width: "100%",
-                  border: `1px solid ${colors["border-default"]}`,
-                  borderRadius: borderRadius.md,
-                  padding: spacing[3],
-                  fontSize: typography.bodySm.size,
-                  height: 80,
-                  marginBottom: spacing[4],
-                  resize: "none",
-                  boxSizing: "border-box",
-                  backgroundColor: autoReplyEnabled
-                    ? colors["surface-card"]
-                    : colors["surface-subtle"],
-                  color: colors["text-primary"],
-                }}
-              />
-
-              {/* Save settings button */}
-              <button type="button" style={primaryBtn}>
-                Save Settings
-              </button>
+                  <button type="button" style={primaryBtn}>
+                    Save Settings
+                  </button>
+                </>
+              )}
             </div>
           )}
 
@@ -889,10 +982,10 @@ function ChannelToggleRow({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "1fr 180px 60px",
+        gridTemplateColumns: "1fr 100px 180px 60px",
         alignItems: "center",
         padding: "0 16px",
-        height: 52, // Spec: 52px row height
+        height: 52,
         borderBottom: `1px solid ${colors["border-default"]}`,
         opacity: saving ? 0.6 : 1,
         transition: "opacity 0.15s",
@@ -910,6 +1003,11 @@ function ChannelToggleRow({
         }}
       >
         #{channel.channelName}
+      </span>
+
+      {/* Member count */}
+      <span style={{ fontSize: typography.captionSm.size, color: colors["text-tertiary"] }}>
+        {channel.memberCount != null ? channel.memberCount : "—"}
       </span>
 
       {/* Client dropdown - only visible when monitoring is ON */}
