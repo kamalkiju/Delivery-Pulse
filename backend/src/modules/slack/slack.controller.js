@@ -2,7 +2,6 @@
 
 import SlackMessage from "../../models/SlackMessage.model.js";
 import SlackWorkspace from "../../models/SlackWorkspace.model.js";
-import SlackChannel from "../../models/SlackChannel.model.js";
 import {
   getWorkspaceIdFromRequest,
   resolveWorkspaceContext,
@@ -162,31 +161,9 @@ export async function listMessages(req, res) {
       messageFilter.teamId = req.query.teamId;
     }
 
-    // Scope messages to monitored channels (isClientChannel: true)
-    // This ensures the Monitor toggle in Settings controls what appears here
-    const monitoredChannels = await SlackChannel.find({
-      organisationId,
-      isClientChannel: true,
-      ...(wsContext.workspaceId ? { workspaceId: wsContext.workspaceId } : {}),
-    }).select("channelId channelName").lean();
-
-    if (monitoredChannels.length > 0) {
-      const monitoredChannelIds = monitoredChannels.map((c) => c.channelId);
-      const monitoredChannelNames = monitoredChannels.map((c) => c.channelName);
-      messageFilter.$and = [
-        ...(messageFilter.$and ?? []),
-        {
-          $or: [
-            { channelId: { $in: monitoredChannelIds } },
-            { channelName: { $in: monitoredChannelNames } },
-            // Still show messages with no channel assigned (legacy/direct messages)
-            { channelId: null },
-            { channelId: { $exists: false } },
-          ],
-        },
-      ];
-    }
-    // If no channels are monitored yet, show all messages (helps new users see data)
+    // NOTE: The Monitor toggle in Settings controls whether the Slack bot
+    // INGESTS messages from a channel. Messages already ingested are always
+    // shown here regardless of current monitor status — don't filter by isClientChannel.
 
     // Primary = selected workspace or first connected
     const primary =
