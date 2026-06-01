@@ -325,12 +325,76 @@ const SlackMessagesPage = () => {
     }
   };
 
+  // Stats derived from real message data
+  const statsToday = messages.filter((m) => isToday(m.createdAt)).length;
+  const statsClient = messages.filter((m) => m.isExternal).length;
+  const statsStories = messages.filter((m) => m.aiProcessed).length;
+
   return (
     <AppShell pageTitle="Slack" showWorkspaceContext>
+      {/* Stats bar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: spacing[4],
+          marginBottom: spacing[4],
+          flexWrap: "wrap",
+        }}
+      >
+        {[
+          { label: "Messages today", value: statsToday },
+          { label: "Client messages", value: statsClient },
+          { label: "Stories created", value: statsStories },
+        ].map(({ label, value }) => (
+          <div
+            key={label}
+            style={{
+              backgroundColor: colors["surface-card"],
+              border: `1px solid ${colors["border-default"]}`,
+              borderRadius: borderRadius.md,
+              padding: `${spacing[3]} ${spacing[4]}`,
+              minWidth: 120,
+            }}
+          >
+            <div style={{ fontSize: "20px", fontWeight: 700, color: colors["text-primary"] }}>
+              {value}
+            </div>
+            <div style={{ fontSize: typography.captionSm.size, color: colors["text-secondary"], marginTop: 2 }}>
+              {label}
+            </div>
+          </div>
+        ))}
+        {/* Live indicator */}
+        <div
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: spacing[2],
+            fontSize: typography.captionSm.size,
+            fontWeight: 600,
+            color: colors["success-dark"],
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: borderRadius.full,
+              backgroundColor: colors["success-dark"],
+              animation: "pulse 2s infinite",
+            }}
+          />
+          Live · refreshes every 30s
+        </div>
+      </div>
+
       <div
         style={{
           margin: `-${spacing[6]}`,
-          height: "calc(100vh - 60px)",
+          marginTop: 0,
+          height: "calc(100vh - 60px - 80px)",
           display: "flex",
           overflow: "hidden",
           backgroundColor: colors.canvas,
