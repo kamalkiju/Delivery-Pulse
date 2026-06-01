@@ -31,10 +31,11 @@ export async function resolveWorkspaceContext(req, organisationId) {
     return { workspaceId: null, teamId: null, workspace: null };
   }
 
+  // Do NOT filter by isActive here — we resolve the workspace for query scoping
+  // regardless of active state. isActive is managed by connect/disconnect, not switch.
   const workspace = await SlackWorkspace.findOne({
     _id: workspaceId,
     organisationId,
-    isActive: true,
   }).lean();
 
   if (!workspace) {

@@ -511,6 +511,13 @@ export async function getWorkspaces(req, res) {
       return res.status(400).json({ success: false, message: "Missing organisation" });
     }
 
+    // Repair workspaces wrongly deactivated by the old switchWorkspace bug.
+    // The disconnect flow nulls out accessToken; these still have one so they're still connected.
+    await SlackWorkspace.updateMany(
+      { organisationId, isActive: false, accessToken: { $exists: true, $ne: null } },
+      { $set: { isActive: true } },
+    );
+
     const workspaces = await SlackWorkspace.find({
       organisationId,
       isActive: true,
@@ -565,22 +572,18 @@ export async function switchWorkspace(req, res) {
       return res.status(400).json({ success: false, message: "Missing organisation" });
     }
 
+    // IMPORTANT: switching is a UI-level preference stored in localStorage.
+    // We do NOT deactivate other workspaces — all connected workspaces stay isActive:true.
+    // Just confirm the target workspace exists and belongs to this org.
     const target = await SlackWorkspace.findOne({
       _id: workspaceId,
       organisationId,
+      isActive: true,
     });
 
     if (!target) {
       return res.status(404).json({ success: false, message: "Workspace not found" });
     }
-
-    await SlackWorkspace.updateMany(
-      { organisationId, _id: { $ne: target._id } },
-      { $set: { isActive: false } },
-    );
-
-    target.isActive = true;
-    await target.save();
 
     return res.json({
       success: true,
@@ -839,6 +842,7 @@ export async function disconnect(req, res) {
     }
 
     workspace.isActive = false;
+    workspace.accessToken = null; // Null out token so repair migration doesn't re-activate
     await workspace.save();
 
     await SlackChannel.updateMany(
