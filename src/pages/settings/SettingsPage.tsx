@@ -60,7 +60,7 @@ const roleMapping: RoleRow[] = [
 export default function SettingsPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
 
   const [activeSection, setActiveSection] = useState<SettingsSection>(
     location.pathname.includes("/settings/slack") ? "slack-setup" : "slack-setup",
@@ -116,24 +116,25 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const connected = searchParams.get("connected");
+    const slackConnected = searchParams.get("slack_connected");
     const workspace = searchParams.get("workspace");
-    if (connected === "true" || searchParams.get("slack") === "connected") {
+    if (connected === "true" || slackConnected === "true" || searchParams.get("slack") === "connected") {
       setSlackConnected(true);
       if (workspace) setSlackTeamName(workspace);
       const wsId = searchParams.get("workspaceId");
       if (wsId) setActiveWorkspaceId(wsId);
       setSlackNotice(`Slack connected${workspace ? ` to ${workspace}` : ""}.`);
-      setSearchParams({}, { replace: true });
+      navigate("/settings", { replace: true });
       loadSlackStatus();
     }
-    if (connected === "false" || searchParams.get("error")) {
+    if (connected === "false" || slackConnected === "false" || searchParams.get("error")) {
       const message = searchParams.get("error") ?? searchParams.get("message");
       setSlackNotice(
         message ? `Slack connection failed: ${message}` : "Slack connection failed.",
       );
-      setSearchParams({}, { replace: true });
+      navigate("/settings", { replace: true });
     }
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, navigate]);
 
   // Step 1: GET /api/slack/connect-init - authenticated (axios adds JWT header automatically)
   // Step 2: redirect browser to the one-time connect URL returned by the backend
