@@ -11,10 +11,10 @@
 
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { Check, Plus, Slack } from "lucide-react";
+import api from "../../api/axios"; // Shared axios instance — baseURL is already VITE_API_URL/api
 import { getAllClients } from "../../api/clients.api";
 import {
   disconnectSlackWorkspace,
-  getSlackConnectInit,
   getSlackWorkspaces,
   getWorkspaceChannels,
   updateSlackChannel,
@@ -143,15 +143,18 @@ export default function OnboardingSlackStep({
     }
   }, [workspaceIdProp]);
 
-  // Two-step connect: call connect-init (with JWT) → get URL → redirect browser
+  // Step 1: GET /api/slack/connect-init — authenticated (axios adds JWT header automatically)
+  // Step 2: redirect browser to the one-time connect URL returned by the backend
+  // No token is ever appended to the URL manually.
   const handleConnect = async () => {
     setIsConnecting(true);
     try {
-      const connectUrl = await getSlackConnectInit("onboarding");
-      window.location.href = connectUrl;
-    } catch {
+      const response = await api.get("/slack/connect-init");
+      window.location.href = response.data.connectUrl;
+    } catch (error) {
+      console.error("Failed to initiate Slack connect:", error);
       setIsConnecting(false);
-      setError("Could not start Slack connection. Please try again.");
+      setError("Failed to connect Slack. Please try again.");
     }
   };
 

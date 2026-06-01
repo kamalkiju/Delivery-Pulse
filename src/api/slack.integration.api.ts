@@ -1,6 +1,5 @@
 // slack.integration.api.ts — Multi-workspace Slack OAuth + channel setup
 import api from "./axios";
-import { AUTH_TOKEN_KEY } from "./constants";
 
 export interface SlackConnectionStatus {
   connected: boolean;
@@ -159,29 +158,3 @@ export async function getSlackConnectInit(
   return data.connectUrl;
 }
 
-/**
- * getSlackConnectUrl — legacy direct URL builder (kept for reference).
- * @deprecated Use getSlackConnectInit() instead — it avoids JWT in the URL.
- */
-export function getSlackConnectUrl(
-  returnTo: "settings" | "onboarding" = "settings",
-): string {
-  const token = localStorage.getItem(AUTH_TOKEN_KEY);
-  const apiRoot =
-    import.meta.env.VITE_API_URL ??
-    (import.meta.env.DEV ? "/api" : "http://localhost:5000/api");
-
-  const base = apiRoot.startsWith("http")
-    ? apiRoot.replace(/\/api\/?$/, "")
-    : `${window.location.origin}`;
-
-  const path = apiRoot.startsWith("http")
-    ? `${apiRoot}/slack/connect`
-    : `${base}/api/slack/connect`;
-
-  const params = new URLSearchParams();
-  if (token) params.set("token", token);
-  params.set("returnTo", returnTo);
-
-  return `${path}?${params.toString()}`;
-}

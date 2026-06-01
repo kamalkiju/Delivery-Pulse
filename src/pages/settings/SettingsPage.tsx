@@ -3,21 +3,21 @@
 // Built to match DeliveryPulse Figma “Settings” layout + user specs
 // ─────────────────────────────────────────────
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, Slack } from "lucide-react"; // Icons for status/error affordances — consistent with the app icon set
-import AppShell from "../../components/layout/AppShell"; // AppShell wraps sidebar + topnav — pageTitle becomes “Settings”
+import { useEffect, useMemo, useState, type CSSProperties } from “react”;
+import { useLocation, useNavigate, useSearchParams } from “react-router-dom”;
+import { AlertTriangle, Check, Slack } from “lucide-react”; // Icons for status/error affordances — consistent with the app icon set
+import AppShell from “../../components/layout/AppShell”; // AppShell wraps sidebar + topnav — pageTitle becomes “Settings”
+import api from “../../api/axios”; // Shared axios instance — baseURL is already VITE_API_URL/api
 import {
   disconnectSlackWorkspace,
   getSlackChannels,
-  getSlackConnectInit,
   getSlackStatus,
   getSlackWorkspaces,
   updateSlackChannel,
   type SlackChannelItem,
   type SlackClientOption,
   type SlackWorkspaceSummary,
-} from "../../api/slack.integration.api";
+} from “../../api/slack.integration.api”;
 import { borderRadius, colors, spacing, typography } from "../../styles/tokens"; // Tokens ensure every color/spacing matches DeliveryPulse
 
 // ── Types ────────────────────────────────────────────────────
@@ -135,13 +135,16 @@ export default function SettingsPage() {
     }
   }, [searchParams, setSearchParams]);
 
-  // Two-step connect: call connect-init (with JWT) → get URL → redirect browser
-  const connectSlack = async () => {
+  // Step 1: GET /api/slack/connect-init — authenticated (axios adds JWT header automatically)
+  // Step 2: redirect browser to the one-time connect URL returned by the backend
+  // No token is ever appended to the URL manually.
+  const handleConnectSlack = async () => {
     try {
-      const connectUrl = await getSlackConnectInit("settings");
-      window.location.href = connectUrl;
-    } catch {
-      setSlackNotice("Could not start Slack connection. Please try again.");
+      const response = await api.get("/slack/connect-init");
+      window.location.href = response.data.connectUrl;
+    } catch (error) {
+      console.error("Failed to initiate Slack connect:", error);
+      setSlackNotice("Failed to connect Slack. Please try again.");
     }
   };
 
@@ -436,12 +439,12 @@ export default function SettingsPage() {
                 {/* Right buttons */}
                 <div style={{ marginLeft: "auto", display: "flex", gap: spacing[2], flexWrap: "wrap" }}>
                   {!slackConnected ? (
-                    <button type="button" style={primaryBtn} onClick={connectSlack}>
+                    <button type="button" style={primaryBtn} onClick={handleConnectSlack}>
                       Connect Slack
                     </button>
                   ) : (
                     <>
-                      <button type="button" style={primaryBtn} onClick={connectSlack}>
+                      <button type="button" style={primaryBtn} onClick={handleConnectSlack}>
                         Add Workspace
                       </button>
                       <button type="button" style={ghostBtn} onClick={loadSlackStatus}>
