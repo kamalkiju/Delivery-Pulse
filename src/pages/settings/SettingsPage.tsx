@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────
-// SettingsPage — workspace and integration configuration
+// SettingsPage - workspace and integration configuration
 // Built to match DeliveryPulse Figma "Settings" layout + user specs
 // ─────────────────────────────────────────────
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, Slack } from "lucide-react"; // Icons for status/error affordances — consistent with the app icon set
-import AppShell from "../../components/layout/AppShell"; // AppShell wraps sidebar + topnav — pageTitle becomes "Settings"
-import api from "../../api/axios"; // Shared axios instance — baseURL is already VITE_API_URL/api
+import { AlertTriangle, Check, Slack } from "lucide-react"; // Icons for status/error affordances - consistent with the app icon set
+import AppShell from "../../components/layout/AppShell"; // AppShell wraps sidebar + topnav - pageTitle becomes "Settings"
+import api from "../../api/axios"; // Shared axios instance - baseURL is already VITE_API_URL/api
 import {
   disconnectSlackWorkspace,
   getSlackChannels,
@@ -38,7 +38,7 @@ type SettingsSection =
 interface NavItem {
   id: SettingsSection; // Which section this nav item opens
   label: string; // Visible label in the sub-nav
-  icon: string; // Emoji icon per spec — simple, designer-friendly
+  icon: string; // Emoji icon per spec - simple, designer-friendly
 }
 
 interface RoleRow {
@@ -47,13 +47,13 @@ interface RoleRow {
   role: string; // Team role label
 }
 
-// ── Static data (role mapping only — channels loaded from API) ────────────────
+// ── Static data (role mapping only - channels loaded from API) ────────────────
 
 const roleMapping: RoleRow[] = [
   { name: "Vijay M", username: "@vijay.m", role: "Project Manager" },
   { name: "Sneha N", username: "@sneha.n", role: "Business Analyst" },
   { name: "Deepak K", username: "@deepak.k", role: "Developer" },
-]; // Table rows per spec — maps Slack users to roles
+]; // Table rows per spec - maps Slack users to roles
 
 // ── Page component ───────────────────────────────────────────
 
@@ -78,7 +78,7 @@ export default function SettingsPage() {
   const [clients, setClients] = useState<SlackClientOption[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
 
-  // loadChannels — fetch channels + clients for the given workspace
+  // loadChannels - fetch channels + clients for the given workspace
   const loadChannels = (workspaceId: string) => {
     setChannelsLoading(true);
     getSlackChannels(workspaceId)
@@ -135,7 +135,7 @@ export default function SettingsPage() {
     }
   }, [searchParams, setSearchParams]);
 
-  // Step 1: GET /api/slack/connect-init — authenticated (axios adds JWT header automatically)
+  // Step 1: GET /api/slack/connect-init - authenticated (axios adds JWT header automatically)
   // Step 2: redirect browser to the one-time connect URL returned by the backend
   // No token is ever appended to the URL manually.
   const handleConnectSlack = async () => {
@@ -160,13 +160,13 @@ export default function SettingsPage() {
     }
   };
 
-  // autoReplyEnabled — toggles the auto-reply switch and the textarea enablement
-  const [autoReplyEnabled, setAutoReplyEnabled] = useState(true); // ON state by default — aligns with typical setup flows
+  // autoReplyEnabled - toggles the auto-reply switch and the textarea enablement
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(true); // ON state by default - aligns with typical setup flows
 
-  // tokenExpired — controls the ADO Setup error card state
-  const [tokenExpired, setTokenExpired] = useState(true); // True by default — shows the token-expired reconnect guide
+  // tokenExpired - controls the ADO Setup error card state
+  const [tokenExpired, setTokenExpired] = useState(true); // True by default - shows the token-expired reconnect guide
 
-  // Current nav lists — grouped by section label to match your left-nav spec
+  // Current nav lists - grouped by section label to match your left-nav spec
   const navGroups = useMemo(
     () => [
       {
@@ -202,9 +202,9 @@ export default function SettingsPage() {
       },
     ],
     [],
-  ); // navGroups is static — memo keeps referential stability
+  ); // navGroups is static - memo keeps referential stability
 
-  // Right-panel title/subtitle — changes based on the selected section
+  // Right-panel title/subtitle - changes based on the selected section
   const header = useMemo(() => {
     if (activeSection === "slack-setup") {
       return {
@@ -232,13 +232,13 @@ export default function SettingsPage() {
 
   return (
     <AppShell pageTitle="Settings">
-      {/* Full-bleed split layout — cancels AppShell 24px padding */}
+      {/* Full-bleed split layout - cancels AppShell 24px padding */}
       <div
         style={{
           margin: `-${spacing[6]}`, // Removes AppShell padding so the sub-nav touches the edge like Figma
           height: "calc(100vh - 60px)", // Spec: height calc(100vh - 60px)
           display: "flex", // Two panel layout
-          overflow: "hidden", // Prevents body scroll — right panel handles its own scrolling
+          overflow: "hidden", // Prevents body scroll - right panel handles its own scrolling
           backgroundColor: colors.canvas, // Canvas background behind panels
         }}
       >
@@ -462,7 +462,7 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* SECTION — Client Channels (real data from API) */}
+              {/* SECTION - Client Channels (real data from API) */}
               {slackConnected && (
                 <div style={{ marginBottom: spacing[5] }}>
                   {/* Section header with inline Refresh button */}
@@ -540,7 +540,7 @@ export default function SettingsPage() {
                         <span style={tableHeaderCell}>MONITOR</span>
                       </div>
 
-                      {/* One row per channel — toggle + client dropdown */}
+                      {/* One row per channel - toggle + client dropdown */}
                       {channels.map((ch) => (
                         <ChannelToggleRow
                           key={ch.id}
@@ -558,7 +558,7 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* SECTION — Team Role Mapping */}
+              {/* SECTION - Team Role Mapping */}
               <div style={{ ...sectionTitle, marginTop: spacing[5] }}>Team Role Mapping</div>
               <SettingsTable
                 columns={["NAME", "SLACK USERNAME", "ROLE", "ACTIONS"]}
@@ -573,7 +573,7 @@ export default function SettingsPage() {
                 footerLink="+ Add Member"
               />
 
-              {/* SECTION — Auto-Reply Settings */}
+              {/* SECTION - Auto-Reply Settings */}
               <div style={{ ...sectionTitle, marginTop: spacing[5] }}>Auto-Reply Settings</div>
 
               {/* Toggle row */}
@@ -679,7 +679,7 @@ export default function SettingsPage() {
                     <AlertTriangle size={20} color={colors.danger} style={{ marginTop: 2 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: "14px", fontWeight: 700, color: colors.danger }}>
-                        Connection Error — Token expired on 19 May
+                        Connection Error - Token expired on 19 May
                       </div>
                       <ol style={{ margin: `${spacing[3]} 0 0 18px`, color: colors["text-secondary"], fontSize: typography.bodySm.size }}>
                         <li style={{ marginBottom: 6 }}>Go to Azure DevOps link</li>
@@ -733,7 +733,7 @@ export default function SettingsPage() {
                 >
                   <Check size={18} color={colors["success-dark"]} />
                   <div style={{ fontSize: "14px", fontWeight: 700, color: colors["text-primary"] }}>
-                    Connected — token refreshed successfully
+                    Connected - token refreshed successfully
                   </div>
                 </div>
               )}
@@ -821,12 +821,12 @@ export default function SettingsPage() {
   );
 }
 
-// ── ChannelToggleRow — one row in the Client Channels list ───
+// ── ChannelToggleRow - one row in the Client Channels list ───
 //
 // Props:
-//   channel  — SlackChannelItem from the API
-//   clients  — list of client options for the dropdown
-//   onUpdate — called with the optimistically-updated channel (reverted on API error)
+//   channel  - SlackChannelItem from the API
+//   clients  - list of client options for the dropdown
+//   onUpdate - called with the optimistically-updated channel (reverted on API error)
 
 function ChannelToggleRow({
   channel,
@@ -839,7 +839,7 @@ function ChannelToggleRow({
 }) {
   const [saving, setSaving] = useState(false);
 
-  // Toggle monitoring ON/OFF — optimistic update, revert on API error
+  // Toggle monitoring ON/OFF - optimistic update, revert on API error
   const toggle = async (isOn: boolean) => {
     const optimistic: SlackChannelItem = {
       ...channel,
@@ -911,7 +911,7 @@ function ChannelToggleRow({
         #{channel.channelName}
       </span>
 
-      {/* Client dropdown — only visible when monitoring is ON */}
+      {/* Client dropdown - only visible when monitoring is ON */}
       {channel.isClientChannel ? (
         <select
           value={channel.clientId ?? ""}
@@ -929,7 +929,7 @@ function ChannelToggleRow({
             width: "100%",
           }}
         >
-          <option value="">— select client —</option>
+          <option value="">- select client -</option>
           {clients.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -938,11 +938,11 @@ function ChannelToggleRow({
         </select>
       ) : (
         <span style={{ fontSize: typography.captionSm.size, color: colors["text-tertiary"] }}>
-          —
+          -
         </span>
       )}
 
-      {/* Toggle switch — green when ON, gray when OFF */}
+      {/* Toggle switch - green when ON, gray when OFF */}
       <button
         type="button"
         disabled={saving}
@@ -954,8 +954,8 @@ function ChannelToggleRow({
           border: "none",
           cursor: saving ? "not-allowed" : "pointer",
           backgroundColor: channel.isClientChannel
-            ? colors.success // ON — green #10b981
-            : colors["border-light"], // OFF — gray #cbd5e1
+            ? colors.success // ON - green #10b981
+            : colors["border-light"], // OFF - gray #cbd5e1
           position: "relative",
           flexShrink: 0,
         }}
