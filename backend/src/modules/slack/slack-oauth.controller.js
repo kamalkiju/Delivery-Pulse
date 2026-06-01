@@ -43,6 +43,10 @@ const SLACK_BOT_SCOPES = [
 // stores code_verifier temporarily during OAuth flow (key = random state string)
 const pkceStore = new Map();
 
+// stores one-time init tokens so the browser redirect to /connect doesn't need a JWT
+// key = random hex token, value = { organisationId, userId, returnTo, createdAt }
+const initTokens = new Map();
+
 // ── PKCE helpers ─────────────────────────────────────────────────────────────
 
 /**
@@ -74,6 +78,16 @@ function cleanExpiredPkceEntries() {
   }
 }
 
+/** Remove init tokens older than 5 minutes */
+function cleanExpiredInitTokens() {
+  const maxAgeMs = 5 * 60 * 1000;
+  for (const [key, value] of initTokens.entries()) {
+    if (Date.now() - value.createdAt > maxAgeMs) {
+      initTokens.delete(key);
+    }
+  }
+}
+
 function getOrgAndUser(req) {
   const organisationId = req.user?.orgId ?? req.user?.organisationId;
   const userId = req.user?.userId ?? req.user?.id;
@@ -95,12 +109,20 @@ function errorRedirect({ returnTo, errorCode }) {
   return `${frontendUrl()}/settings/slack?connected=false&error=${code}`;
 }
 
-// ── FUNCTION 1 — GET /api/slack/connect ──────────────────────────────────────
+// ── FUNCTION 1a — GET /api/slack/connect-init (requires auth) ────────────────
 
 /**
- * connect — start OAuth: generate PKCE, store verifier, redirect to Slack authorize URL.
+ * connectInit — called by the frontend (with JWT auth) to get a short-lived connect URL.
+ *
+ * WHY?
+ *   Browser redirects cannot send Authorization headers, so we cannot protect
+ *   GET /api/slack/connect with a normal auth middleware.
+ *   Instead the frontend calls this endpoint first (with the JWT in the header),
+ *   gets back a one-time init token embedded in the connect URL, then redirects
+ *   the browser to that URL. The connect handler reads the init token, validates
+ *   it, and proceeds — no JWT ever appears in server logs or the browser address bar.
  */
-export async function connect(req, res) {
+export async function connectInit(req, res) {
   try {
     const { organisationId, userId } = getOrgAndUser(req);
 
@@ -111,6 +133,79 @@ export async function connect(req, res) {
       });
     }
 
+    const returnTo = req.query.returnTo === "onboarding" ? "onboarding" : "settings";
+
+    // Generate a single-use, short-lived (5 min) init token
+    const initToken = crypto.randomBytes(16).toString("hex");
+    initTokens.set(initToken, {
+      organisationId: organisationId.toString(),
+      userId: userId.toString(),
+      returnTo,
+      createdAt: Date.now(),
+    });
+    cleanExpiredInitTokens();
+
+    // Build the backend connect URL — use BACKEND_URL env var or derive from request
+    const backendBase =
+      process.env.BACKEND_URL ??
+      `${req.protocol}://${req.get("host")}`;
+
+    const connectUrl = `${backendBase}/api/slack/connect?init=${initToken}&returnTo=${returnTo}`;
+
+    console.log(`[slack-oauth] connectInit for org ${organisationId}, returnTo=${returnTo}`);
+    return res.json({ success: true, connectUrl });
+  } catch (error) {
+    console.error("[slack-oauth] connectInit:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message ?? "Failed to create connect URL",
+    });
+  }
+}
+
+// ── FUNCTION 1b — GET /api/slack/connect (no auth — browser redirect) ─────────
+
+/**
+ * connect — start OAuth: validate init token, generate PKCE, redirect to Slack.
+ *
+ * This endpoint is PUBLIC (no JWT required) because it is reached via a browser
+ * redirect. Identity is established through the short-lived init token issued
+ * by connectInit above.
+ */
+export async function connect(req, res) {
+  try {
+    // ── Step 1: validate the one-time init token ──────────────────────────────
+    const initToken = req.query.init ? String(req.query.init) : null;
+
+    if (!initToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing init token. Call GET /api/slack/connect-init first.",
+      });
+    }
+
+    const initData = initTokens.get(initToken);
+    if (!initData) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired init token. Please try connecting again.",
+      });
+    }
+
+    // One-time use — delete before proceeding so it cannot be replayed
+    initTokens.delete(initToken);
+
+    // Extra: reject if somehow older than 5 minutes (belt-and-suspenders)
+    if (Date.now() - initData.createdAt > 5 * 60 * 1000) {
+      return res.status(400).json({
+        success: false,
+        message: "Init token expired. Please try connecting again.",
+      });
+    }
+
+    const { organisationId, userId } = initData;
+    const returnTo = initData.returnTo ?? "settings";
+
     if (!process.env.SLACK_CLIENT_ID || !process.env.SLACK_REDIRECT_URI) {
       return res.status(500).json({
         success: false,
@@ -118,43 +213,34 @@ export async function connect(req, res) {
       });
     }
 
-    const returnTo =
-      req.query.returnTo === "onboarding" ? "onboarding" : "settings";
-
-    // Step 1 — Generate PKCE values (verifier stays secret; challenge goes to Slack)
+    // ── Step 2: generate PKCE values ─────────────────────────────────────────
+    // verifier stays secret server-side; challenge goes to Slack in the URL
     const { codeVerifier, codeChallenge } = generatePKCE();
 
-    // Step 2 — random state to prevent CSRF attacks (Slack echoes this on callback)
+    // ── Step 3: random state — CSRF protection (Slack echoes this on callback) ──
     const state = crypto.randomBytes(16).toString("hex");
 
-    // Step 3 — Store verifier with state as key (retrieved in callback using state)
+    // ── Step 4: store verifier + identity keyed by state ─────────────────────
     pkceStore.set(state, {
       codeVerifier,
-      organisationId: organisationId.toString(),
-      userId: userId.toString(),
+      organisationId,
+      userId,
       returnTo,
       createdAt: Date.now(),
     });
-
-    // Step 4 — Clean old entries older than 10 minutes
     cleanExpiredPkceEntries();
 
-    // Step 5 — Build OAuth URL with PKCE parameters
+    // ── Step 5: build Slack authorize URL with PKCE ───────────────────────────
     const params = new URLSearchParams();
-    // client_id — Slack app ID from api.slack.com
     params.append("client_id", process.env.SLACK_CLIENT_ID);
-    // scope — bot permissions requested at install
     params.append("scope", SLACK_BOT_SCOPES);
-    // redirect_uri — must match SLACK_REDIRECT_URI in .env and Slack app settings exactly
     params.append("redirect_uri", process.env.SLACK_REDIRECT_URI);
-    // state — CSRF token; key into pkceStore
     params.append("state", state);
-    // code_challenge — SHA256(verifier) sent to Slack (verifier never leaves our server until token exchange)
     params.append("code_challenge", codeChallenge);
-    // code_challenge_method — S256 means challenge is SHA256 hash (Slack standard)
     params.append("code_challenge_method", "S256");
 
     const authUrl = `https://slack.com/oauth/v2/authorize?${params.toString()}`;
+    console.log(`[slack-oauth] connect: redirecting org ${organisationId} to Slack`);
     return res.redirect(authUrl);
   } catch (error) {
     console.error("[slack-oauth] connect:", error);

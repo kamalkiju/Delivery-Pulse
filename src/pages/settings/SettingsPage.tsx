@@ -10,7 +10,7 @@ import AppShell from "../../components/layout/AppShell"; // AppShell wraps sideb
 import {
   disconnectSlackWorkspace,
   getSlackChannels,
-  getSlackConnectUrl,
+  getSlackConnectInit,
   getSlackStatus,
   getSlackWorkspaces,
   updateSlackChannel,
@@ -135,8 +135,14 @@ export default function SettingsPage() {
     }
   }, [searchParams, setSearchParams]);
 
-  const connectSlack = () => {
-    window.location.href = getSlackConnectUrl("settings");
+  // Two-step connect: call connect-init (with JWT) → get URL → redirect browser
+  const connectSlack = async () => {
+    try {
+      const connectUrl = await getSlackConnectInit("settings");
+      window.location.href = connectUrl;
+    } catch {
+      setSlackNotice("Could not start Slack connection. Please try again.");
+    }
   };
 
   const handleDisconnectSlack = async () => {

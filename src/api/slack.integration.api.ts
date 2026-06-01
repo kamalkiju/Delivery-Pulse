@@ -140,6 +140,29 @@ export async function mapSlackChannels(
   return { monitoredChannelCount: data.monitoredChannelCount ?? 0 };
 }
 
+/**
+ * getSlackConnectInit — two-step OAuth connect (preferred).
+ *
+ * Calls GET /api/slack/connect-init (authenticated via axios interceptor).
+ * Backend generates a short-lived init token and returns the full connect URL.
+ * The caller should then do `window.location.href = connectUrl` to start the OAuth flow.
+ *
+ * This avoids putting the JWT in the browser address bar / server logs.
+ */
+export async function getSlackConnectInit(
+  returnTo: "settings" | "onboarding" = "settings",
+): Promise<string> {
+  const { data } = await api.get<{ success: boolean; connectUrl: string }>(
+    "/slack/connect-init",
+    { params: { returnTo } },
+  );
+  return data.connectUrl;
+}
+
+/**
+ * getSlackConnectUrl — legacy direct URL builder (kept for reference).
+ * @deprecated Use getSlackConnectInit() instead — it avoids JWT in the URL.
+ */
 export function getSlackConnectUrl(
   returnTo: "settings" | "onboarding" = "settings",
 ): string {

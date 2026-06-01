@@ -14,7 +14,7 @@ import { Check, Plus, Slack } from "lucide-react";
 import { getAllClients } from "../../api/clients.api";
 import {
   disconnectSlackWorkspace,
-  getSlackConnectUrl,
+  getSlackConnectInit,
   getSlackWorkspaces,
   getWorkspaceChannels,
   updateSlackChannel,
@@ -143,9 +143,16 @@ export default function OnboardingSlackStep({
     }
   }, [workspaceIdProp]);
 
-  const handleConnect = () => {
+  // Two-step connect: call connect-init (with JWT) → get URL → redirect browser
+  const handleConnect = async () => {
     setIsConnecting(true);
-    window.location.href = getSlackConnectUrl("onboarding");
+    try {
+      const connectUrl = await getSlackConnectInit("onboarding");
+      window.location.href = connectUrl;
+    } catch {
+      setIsConnecting(false);
+      setError("Could not start Slack connection. Please try again.");
+    }
   };
 
   const handleDisconnect = async (workspaceId: string) => {

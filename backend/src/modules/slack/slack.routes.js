@@ -7,8 +7,8 @@ import express from "express";
 
 import { authMiddleware } from "../auth/auth.middleware.js";
 import { requireAuth } from "../../middlewares/auth.middleware.js";
-import { slackConnectAuth } from "./slack.connect.middleware.js";
 import {
+  connectInit,
   connect,
   callback,
   getStatus,
@@ -25,9 +25,13 @@ import { listMessages, getMessageDetail } from "./slack.controller.js";
 const router = express.Router();
 
 // ── OAuth ────────────────────────────────────────────────────────────────────
-// connect — JWT via Bearer header or ?token= (browser link)
-router.get("/connect", slackConnectAuth, connect);
-// callback — PUBLIC: Slack redirects here without a JWT
+// Step 1: authenticated — generates a short-lived init token and returns the connect URL.
+//         The frontend calls this with the JWT in the Authorization header.
+router.get("/connect-init", authMiddleware, connectInit);
+// Step 2: public — browser redirect from connect-init. Validates the init token,
+//         generates PKCE, and redirects to Slack's authorize page.
+router.get("/connect", connect);
+// callback — PUBLIC: Slack redirects here with ?code= after the user allows the app.
 router.get("/callback", callback);
 
 // ── Workspace & channel management (authenticated) ───────────────────────────
