@@ -3,10 +3,15 @@ import axios from "axios";
 import { AUTH_TOKEN_KEY } from "./constants";
 import { ACTIVE_WORKSPACE_ID_KEY } from "../utils/workspace";
 
-// Dev: Vite proxies /api → localhost:5000. Prod: set VITE_API_URL in .env
-const baseURL =
-  import.meta.env.VITE_API_URL ??
-  (import.meta.env.DEV ? "/api" : "http://localhost:5000/api");
+// Build the base URL so every API call lands at /api/* regardless of environment:
+//   VITE_API_URL set (production) → e.g. "https://my-backend.com/api"
+//   Dev without VITE_API_URL      → "/api"  (Vite proxy forwards to localhost:5000)
+//   Non-dev without VITE_API_URL  → "http://localhost:5000/api" (fallback)
+const baseURL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`  // append /api so calls don't skip the prefix
+  : import.meta.env.DEV
+    ? "/api"
+    : "http://localhost:5000/api";
 
 // Single axios instance — all api/*.ts files import this default export
 const api = axios.create({
