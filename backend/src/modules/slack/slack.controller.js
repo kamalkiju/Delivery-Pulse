@@ -154,9 +154,7 @@ export async function listMessages(req, res) {
       return res.status(400).json({ message: "Missing organisation" });
     }
 
-    console.log("[listMessages] org:", organisationId);
-
-    // Fetch workspaces for sidebar display only — NOT used to filter messages
+    // All workspaces belonging to this org — used for display AND as a teamId fallback
     const allWorkspaces = await SlackWorkspace.find({ organisationId })
       .sort({ connectedAt: -1 })
       .lean();
@@ -167,10 +165,19 @@ export async function listMessages(req, res) {
     const teamIdToName = Object.fromEntries(
       allWorkspaces.map((w) => [w.teamId, w.teamName]),
     );
+    const teamIds = allWorkspaces.map((w) => w.teamId).filter(Boolean);
 
-    // Filter by organisationId only — no teamId restriction so every ingested
-    // message is returned regardless of which workspace it came from
-    const messages = await SlackMessage.find({ organisationId })
+    console.log("[listMessages] org:", organisationId, "| workspaces:", teamIds);
+
+    // Dual filter: messages saved with this org's ID  OR  messages from any
+    // teamId that belongs to this org's workspaces.
+    // The teamId fallback catches messages saved under a previous organisationId
+    // when a workspace was reconnected after an account recreate.
+    const messageFilter = teamIds.length > 0
+      ? { $or: [{ organisationId }, { teamId: { $in: teamIds } }] }
+      : { organisationId };
+
+    const messages = await SlackMessage.find(messageFilter)
       .sort({ createdAt: -1 })
       .limit(50)
       .populate("clientId", "name company")
@@ -213,10 +220,15 @@ export async function getMessageDetail(req, res) {
       return res.status(400).json({ message: "Missing organisation" });
     }
 
-    const msg = await SlackMessage.findOne({
-      _id: req.params.id,
-      organisationId,
-    })
+    // Allow lookup by organisationId OR by a teamId owned by this org
+    const orgWorkspaces = await SlackWorkspace.find({ organisationId }).lean();
+    const orgTeamIds = orgWorkspaces.map((w) => w.teamId).filter(Boolean);
+
+    const detailFilter = orgTeamIds.length > 0
+      ? { _id: req.params.id, $or: [{ organisationId }, { teamId: { $in: orgTeamIds } }] }
+      : { _id: req.params.id, organisationId };
+
+    const msg = await SlackMessage.findOne(detailFilter)
       .populate("clientId", "name company")
       .populate("storyId")
       .lean();

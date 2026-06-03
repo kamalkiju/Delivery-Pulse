@@ -134,6 +134,8 @@ async function processIncomingMessage({ message, say, client, workspace }) {
       : null;
 
   // ── Save message to MongoDB (always) ──────────────────────────────────────
+  console.log("[slack] saving message | org:", organisationId, "| team:", activeWorkspace.teamId ?? teamId);
+
   const savedMessage = await SlackMessage.create({
     organisationId,
     teamId: activeWorkspace.teamId ?? teamId,
