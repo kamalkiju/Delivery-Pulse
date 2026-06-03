@@ -101,6 +101,51 @@ function toListItem(msg, workspaceName) {
   };
 }
 
+/**
+ * GET /api/slack/debug — diagnostic endpoint: shows raw counts to help
+ * identify whether messages exist in DB and what the org/workspace state is.
+ */
+export async function debugMessages(req, res) {
+  try {
+    const organisationId = req.user?.orgId ?? req.user?.organisationId;
+    if (!organisationId) {
+      return res.status(400).json({ error: "No organisationId in token" });
+    }
+
+    const [totalMessages, orgMessages, workspaces] = await Promise.all([
+      SlackMessage.countDocuments({}),
+      SlackMessage.countDocuments({ organisationId }),
+      SlackWorkspace.find({ organisationId }).lean(),
+    ]);
+
+    const recentRaw = await SlackMessage.find({ organisationId })
+      .sort({ createdAt: -1 })
+      .limit(3)
+      .lean();
+
+    return res.json({
+      organisationId,
+      totalMessagesInDB: totalMessages,
+      messagesForThisOrg: orgMessages,
+      workspacesForThisOrg: workspaces.map((w) => ({
+        id: w._id,
+        teamId: w.teamId,
+        teamName: w.teamName,
+        isActive: w.isActive,
+      })),
+      recentMessages: recentRaw.map((m) => ({
+        id: m._id,
+        teamId: m.teamId,
+        channelName: m.channelName,
+        senderName: m.senderName,
+        createdAt: m.createdAt,
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
 /** GET /api/slack/messages — org-scoped; x-workspace-id narrows to one Slack workspace */
 export async function listMessages(req, res) {
   try {
@@ -109,6 +154,8 @@ export async function listMessages(req, res) {
     if (!organisationId) {
       return res.status(400).json({ message: "Missing organisation" });
     }
+
+    console.log("[listMessages] org:", organisationId, "| x-workspace-id:", req.headers["x-workspace-id"] ?? "none");
 
     // Multi-workspace: header from sidebar (or ?workspaceId= for direct links)
     // Resolve workspace context but never return early on notFound — a stale
@@ -125,6 +172,8 @@ export async function listMessages(req, res) {
     const allWorkspaces = await SlackWorkspace.find({ organisationId })
       .sort({ connectedAt: -1 })
       .lean();
+
+    console.log("[listMessages] workspaces in DB:", allWorkspaces.length, "| wsContext.teamId:", wsContext.teamId ?? "none");
 
     const activeWorkspaces = allWorkspaces.filter((w) => w.isActive);
 
@@ -158,11 +207,15 @@ export async function listMessages(req, res) {
       ) ?? activeWorkspaces[0] ?? allWorkspaces[0];
     const workspaceName = primary?.teamName ?? null;
 
+    console.log("[listMessages] filter:", JSON.stringify(messageFilter));
+
     const messages = await SlackMessage.find(messageFilter)
       .sort({ createdAt: -1 })
       .populate("clientId", "name company")
       .populate("storyId", "title status type priority")
       .lean();
+
+    console.log("[listMessages] found:", messages.length, "messages");
 
     return res.json({
       success: true,

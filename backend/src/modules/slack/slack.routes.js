@@ -21,7 +21,7 @@ import {
   mapChannelsBulk,
   disconnectAll,
 } from "./slack-oauth.controller.js";
-import { listMessages, getMessageDetail } from "./slack.controller.js";
+import { listMessages, getMessageDetail, debugMessages } from "./slack.controller.js";
 
 const router = express.Router();
 
@@ -48,6 +48,7 @@ router.delete("/disconnect", authMiddleware, disconnectAll);
 
 // ── Slack Messages page ──────────────────────────────────────────────────────
 router.use(requireAuth);
+router.get("/debug", debugMessages);
 router.get("/messages", listMessages);
 router.get("/messages/:id", getMessageDetail);
 
