@@ -44,6 +44,10 @@ dotenv.config();
 // Create the Express application instance
 const app = express();
 
+// Disable automatic ETag generation so browsers never receive 304 Not Modified.
+// 304s cause axios to get an empty response body, wiping state with an empty array.
+app.set("etag", false);
+
 // ── CORS — must be registered before helmet and all routes ───────────────────
 // Preflight (OPTIONS) requests arrive before the browser sends the real request.
 // app.options('*', cors()) responds immediately so no auth middleware can reject them.
@@ -66,6 +70,12 @@ const corsOptions = {
 
 // Apply CORS headers to every response (includes preflight OPTIONS handling)
 app.use(cors(corsOptions));
+
+// Prevent all API responses from being cached by the browser or Render's proxy
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 
 // Security headers — registered after CORS so CORS headers are written first
 app.use(helmet({ contentSecurityPolicy: false }));
