@@ -58,14 +58,7 @@ const corsOptions = {
   origin: true,
   credentials: true,
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "x-workspace-id",
-    "Accept",
-    "Origin",
-    "X-Requested-With",
-  ],
+  allowedHeaders: ["Content-Type", "Authorization", "x-workspace-id"],
 };
 
 // Apply CORS headers to every response (includes preflight OPTIONS handling)
