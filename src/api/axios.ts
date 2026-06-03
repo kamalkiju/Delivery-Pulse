@@ -16,6 +16,7 @@ const baseURL = import.meta.env.VITE_API_URL
 // Single axios instance — all api/*.ts files import this default export
 const api = axios.create({
   baseURL,
+  withCredentials: true,
   headers: {
     "Content-Type": "application/json",
   },

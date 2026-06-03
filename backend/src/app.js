@@ -48,32 +48,12 @@ const app = express();
 // Preflight (OPTIONS) requests arrive before the browser sends the real request.
 // app.options('*', cors()) responds immediately so no auth middleware can reject them.
 
-const allowedOrigins = [
-  "https://delivery-pulse-tau.vercel.app",
-  "https://delivery-pulse.vercel.app",
-  process.env.FRONTEND_URL,
-  "http://localhost:5173",
-  "http://localhost:3000",
-];
-
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Non-browser requests (curl, Postman, server-to-server) have no Origin header
-    if (!origin) return callback(null, true);
-
-    // Exact match
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-
-    // Any Vercel preview deployment
-    if (origin.includes("vercel.app")) return callback(null, true);
-
-    // Any localhost port (dev machines)
-    if (origin.includes("localhost")) return callback(null, true);
-
-    return callback(new Error("CORS not allowed"));
-  },
+  // origin: true reflects the request Origin back, satisfying credentials: true
+  // without needing an explicit allowlist — acceptable for a POC deployment
+  origin: true,
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
   allowedHeaders: [
     "Content-Type",
     "Authorization",
@@ -82,8 +62,6 @@ const corsOptions = {
     "Origin",
     "X-Requested-With",
   ],
-  preflightContinue: false,
-  optionsSuccessStatus: 204,
 };
 
 // Apply CORS headers to every response (includes preflight OPTIONS handling)
