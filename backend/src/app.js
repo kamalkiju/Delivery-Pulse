@@ -86,10 +86,7 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
-// Respond to all OPTIONS preflight requests before any other middleware touches them
-app.options("*", cors(corsOptions));
-
-// Apply CORS headers to every response
+// Apply CORS headers to every response (includes preflight OPTIONS handling)
 app.use(cors(corsOptions));
 
 // Security headers — registered after CORS so CORS headers are written first
