@@ -3,6 +3,7 @@
 // Sidebar sends MongoDB SlackWorkspace._id on every API call.
 // Controllers use this helper to scope queries to one Slack team when present.
 
+import mongoose from "mongoose";
 import SlackWorkspace from "../models/SlackWorkspace.model.js";
 
 /**
@@ -28,6 +29,12 @@ export async function resolveWorkspaceContext(req, organisationId) {
   const workspaceId = getWorkspaceIdFromRequest(req);
 
   if (!workspaceId) {
+    return { workspaceId: null, teamId: null, workspace: null };
+  }
+
+  // Guard against stale/corrupt localStorage values that aren't valid ObjectIds.
+  // Mongoose would throw a CastError otherwise, surfacing as a 500 to the client.
+  if (!mongoose.isValidObjectId(workspaceId)) {
     return { workspaceId: null, teamId: null, workspace: null };
   }
 

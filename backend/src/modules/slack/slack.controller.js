@@ -2,10 +2,7 @@
 
 import SlackMessage from "../../models/SlackMessage.model.js";
 import SlackWorkspace from "../../models/SlackWorkspace.model.js";
-import {
-  getWorkspaceIdFromRequest,
-  resolveWorkspaceContext,
-} from "../../utils/workspaceContext.js";
+import { resolveWorkspaceContext } from "../../utils/workspaceContext.js";
 
 function formatTimeAgo(date) {
   if (!date) return "";
@@ -114,42 +111,35 @@ export async function listMessages(req, res) {
     }
 
     // Multi-workspace: header from sidebar (or ?workspaceId= for direct links)
-    const workspaceId = getWorkspaceIdFromRequest(req);
-    const wsContext = await resolveWorkspaceContext(req, organisationId);
-
-    // Only return empty if workspace truly doesn't belong to this org
-    if (workspaceId && wsContext.notFound) {
-      return res.json({
-        success: true,
-        workspace: { connected: false, teamName: null, teamId: null, displayName: null, activeWorkspaceId: workspaceId },
-        workspaces: [],
-        messages: [],
-      });
+    // Resolve workspace context but never return early on notFound — a stale
+    // localStorage workspace ID must not prevent messages from loading.
+    let wsContext;
+    try {
+      wsContext = await resolveWorkspaceContext(req, organisationId);
+    } catch {
+      wsContext = { workspaceId: null, teamId: null, workspace: null };
     }
 
-    // Fetch ALL active workspaces for this org — do NOT limit to one
-    const workspaceQuery = { organisationId, isActive: true };
-    // If a specific workspace is selected via header, scope the primary display
-    // but still load all workspaces for the switcher list
-    const primaryWorkspaceId = wsContext.workspaceId ?? null;
-
-    // Always fetch ALL active workspaces (for the sidebar switcher list)
-    const allActiveWorkspaces = await SlackWorkspace.find(workspaceQuery)
+    // Fetch ALL workspaces (active + inactive) so historical messages from
+    // disconnected/replaced workspaces are still included in the teamId filter.
+    const allWorkspaces = await SlackWorkspace.find({ organisationId })
       .sort({ connectedAt: -1 })
       .lean();
 
+    const activeWorkspaces = allWorkspaces.filter((w) => w.isActive);
+
     const teamIdToName = Object.fromEntries(
-      allActiveWorkspaces.map((w) => [w.teamId, w.teamName]),
+      allWorkspaces.map((w) => [w.teamId, w.teamName]),
     );
 
     const messageFilter = { organisationId };
 
-    // When a specific workspace is selected via x-workspace-id header,
-    // scope messages to that team only (strict per-workspace isolation)
+    // When a specific (valid) workspace is selected, scope messages to that team.
     if (wsContext.teamId) {
       messageFilter.teamId = wsContext.teamId;
-    } else if (allActiveWorkspaces.length > 0) {
-      const teamIds = allActiveWorkspaces.map((w) => w.teamId);
+    } else if (allWorkspaces.length > 0) {
+      // Include messages from every known workspace plus legacy messages with no teamId.
+      const teamIds = allWorkspaces.map((w) => w.teamId).filter(Boolean);
       messageFilter.$or = [
         { teamId: { $in: teamIds } },
         { teamId: null },
@@ -161,15 +151,11 @@ export async function listMessages(req, res) {
       messageFilter.teamId = req.query.teamId;
     }
 
-    // NOTE: The Monitor toggle in Settings controls whether the Slack bot
-    // INGESTS messages from a channel. Messages already ingested are always
-    // shown here regardless of current monitor status — don't filter by isClientChannel.
-
-    // Primary = selected workspace or first connected
+    // Primary = explicitly selected workspace → first active → first in list
     const primary =
-      allActiveWorkspaces.find(
-        (w) => w._id.toString() === (primaryWorkspaceId ?? ""),
-      ) ?? allActiveWorkspaces[0];
+      allWorkspaces.find(
+        (w) => w._id.toString() === (wsContext.workspaceId ?? ""),
+      ) ?? activeWorkspaces[0] ?? allWorkspaces[0];
     const workspaceName = primary?.teamName ?? null;
 
     const messages = await SlackMessage.find(messageFilter)
@@ -181,14 +167,14 @@ export async function listMessages(req, res) {
     return res.json({
       success: true,
       workspace: {
-        connected: allActiveWorkspaces.length > 0,
+        connected: activeWorkspaces.length > 0,
         teamName: workspaceName,
         teamId: primary?.teamId ?? null,
         displayName: workspaceName ? `${workspaceName} Workspace` : null,
         activeWorkspaceId: primary?._id?.toString() ?? null,
       },
-      // Always return ALL workspaces so sidebar switcher stays populated
-      workspaces: allActiveWorkspaces.map((w) => ({
+      // Switcher list shows only active workspaces; inactive ones still contribute messages above.
+      workspaces: activeWorkspaces.map((w) => ({
         id: w._id.toString(),
         teamId: w.teamId,
         teamName: w.teamName,
