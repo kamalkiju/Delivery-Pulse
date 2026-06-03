@@ -2,7 +2,6 @@
 
 import SlackMessage from "../../models/SlackMessage.model.js";
 import SlackWorkspace from "../../models/SlackWorkspace.model.js";
-import { resolveWorkspaceContext } from "../../utils/workspaceContext.js";
 
 function formatTimeAgo(date) {
   if (!date) return "";
@@ -155,68 +154,25 @@ export async function listMessages(req, res) {
       return res.status(400).json({ message: "Missing organisation" });
     }
 
-    console.log("[listMessages] org:", organisationId, "| x-workspace-id:", req.headers["x-workspace-id"] ?? "none");
+    console.log("[listMessages] org:", organisationId);
 
-    // Multi-workspace: header from sidebar (or ?workspaceId= for direct links)
-    // Resolve workspace context but never return early on notFound — a stale
-    // localStorage workspace ID must not prevent messages from loading.
-    let wsContext;
-    try {
-      wsContext = await resolveWorkspaceContext(req, organisationId);
-    } catch {
-      wsContext = { workspaceId: null, teamId: null, workspace: null };
-    }
-
-    // Fetch ALL workspaces (active + inactive) so historical messages from
-    // disconnected/replaced workspaces are still included in the teamId filter.
+    // Fetch workspaces for sidebar display only — NOT used to filter messages
     const allWorkspaces = await SlackWorkspace.find({ organisationId })
       .sort({ connectedAt: -1 })
       .lean();
 
-    console.log("[listMessages] workspaces in DB:", allWorkspaces.length, "| wsContext.teamId:", wsContext.teamId ?? "none");
-
     const activeWorkspaces = allWorkspaces.filter((w) => w.isActive);
-
+    const primary = activeWorkspaces[0] ?? allWorkspaces[0];
+    const workspaceName = primary?.teamName ?? null;
     const teamIdToName = Object.fromEntries(
       allWorkspaces.map((w) => [w.teamId, w.teamName]),
     );
 
-    const messageFilter = { organisationId };
-
-    // Build teamId filter — always use $or so messages saved without a teamId
-    // (before multi-workspace support) are never excluded.
-    if (wsContext.teamId) {
-      // Specific workspace selected: show that team's messages + legacy messages with no teamId
-      messageFilter.$or = [
-        { teamId: wsContext.teamId },
-        { teamId: null },
-        { teamId: { $exists: false } },
-      ];
-    } else if (allWorkspaces.length > 0) {
-      // No workspace filter: show all known workspaces + legacy messages with no teamId
-      const teamIds = allWorkspaces.map((w) => w.teamId).filter(Boolean);
-      messageFilter.$or = [
-        { teamId: { $in: teamIds } },
-        { teamId: null },
-        { teamId: { $exists: false } },
-      ];
-    }
-
-    if (req.query.teamId) {
-      messageFilter.teamId = req.query.teamId;
-    }
-
-    // Primary = explicitly selected workspace → first active → first in list
-    const primary =
-      allWorkspaces.find(
-        (w) => w._id.toString() === (wsContext.workspaceId ?? ""),
-      ) ?? activeWorkspaces[0] ?? allWorkspaces[0];
-    const workspaceName = primary?.teamName ?? null;
-
-    console.log("[listMessages] filter:", JSON.stringify(messageFilter));
-
-    const messages = await SlackMessage.find(messageFilter)
+    // Filter by organisationId only — no teamId restriction so every ingested
+    // message is returned regardless of which workspace it came from
+    const messages = await SlackMessage.find({ organisationId })
       .sort({ createdAt: -1 })
+      .limit(50)
       .populate("clientId", "name company")
       .populate("storyId", "title status type priority")
       .lean();
