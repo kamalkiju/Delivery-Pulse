@@ -44,53 +44,56 @@ dotenv.config();
 // Create the Express application instance
 const app = express();
 
-// Security headers — disable CSP (API-only server; CSP on :5000 confuses browser DevTools)
-app.use(helmet({ contentSecurityPolicy: false }));
+// ── CORS — must be registered before helmet and all routes ───────────────────
+// Preflight (OPTIONS) requests arrive before the browser sends the real request.
+// app.options('*', cors()) responds immediately so no auth middleware can reject them.
 
-// Explicit list of trusted origins — add new Vercel URLs here as needed
 const allowedOrigins = [
-  "https://delivery-pulse-tau.vercel.app",  // primary production deployment
-  "https://delivery-pulse.vercel.app",       // alternate production URL
-  process.env.FRONTEND_URL,                  // override from .env (e.g. custom domain)
-  "http://localhost:5173",                   // Vite dev server
-  "http://localhost:3000",                   // CRA / other local dev server
+  "https://delivery-pulse-tau.vercel.app",
+  "https://delivery-pulse.vercel.app",
+  process.env.FRONTEND_URL,
+  "http://localhost:5173",
+  "http://localhost:3000",
 ];
 
-app.use(
-  cors({
-    // origin is called by the browser's preflight (OPTIONS) and real requests
-    origin: function (origin, callback) {
-      // Non-browser requests (curl, Postman, server-to-server) send no Origin header
-      if (!origin) return callback(null, true);
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Non-browser requests (curl, Postman, server-to-server) have no Origin header
+    if (!origin) return callback(null, true);
 
-      // Exact match against the allow-list
-      if (allowedOrigins.indexOf(origin) !== -1) {
-        return callback(null, true);
-      }
+    // Exact match
+    if (allowedOrigins.includes(origin)) return callback(null, true);
 
-      // Allow ALL Vercel preview deployments (*.vercel.app) automatically
-      // so feature-branch previews work without touching this file
-      if (origin.includes("vercel.app")) {
-        return callback(null, true);
-      }
+    // Any Vercel preview deployment
+    if (origin.includes("vercel.app")) return callback(null, true);
 
-      // Anything else is blocked
-      return callback(new Error("CORS not allowed"));
-    },
+    // Any localhost port (dev machines)
+    if (origin.includes("localhost")) return callback(null, true);
 
-    // Required for cookies / Authorization headers to be sent cross-origin
-    credentials: true,
+    return callback(new Error("CORS not allowed"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "x-workspace-id",
+    "Accept",
+    "Origin",
+    "X-Requested-With",
+  ],
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
 
-    // Explicitly list allowed HTTP methods (browser sends these in preflight)
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+// Respond to all OPTIONS preflight requests before any other middleware touches them
+app.options("*", cors(corsOptions));
 
-    // Headers the frontend is allowed to send:
-    //   Content-Type    — JSON bodies
-    //   Authorization   — Bearer JWT token
-    //   x-workspace-id  — active Slack workspace (multi-tenant scoping)
-    allowedHeaders: ["Content-Type", "Authorization", "x-workspace-id"],
-  }),
-);
+// Apply CORS headers to every response
+app.use(cors(corsOptions));
+
+// Security headers — registered after CORS so CORS headers are written first
+app.use(helmet({ contentSecurityPolicy: false }));
 
 // Parse JSON request bodies (POST/PUT/PATCH)
 app.use(express.json());
