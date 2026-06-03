@@ -183,11 +183,17 @@ export async function listMessages(req, res) {
 
     const messageFilter = { organisationId };
 
-    // When a specific (valid) workspace is selected, scope messages to that team.
+    // Build teamId filter — always use $or so messages saved without a teamId
+    // (before multi-workspace support) are never excluded.
     if (wsContext.teamId) {
-      messageFilter.teamId = wsContext.teamId;
+      // Specific workspace selected: show that team's messages + legacy messages with no teamId
+      messageFilter.$or = [
+        { teamId: wsContext.teamId },
+        { teamId: null },
+        { teamId: { $exists: false } },
+      ];
     } else if (allWorkspaces.length > 0) {
-      // Include messages from every known workspace plus legacy messages with no teamId.
+      // No workspace filter: show all known workspaces + legacy messages with no teamId
       const teamIds = allWorkspaces.map((w) => w.teamId).filter(Boolean);
       messageFilter.$or = [
         { teamId: { $in: teamIds } },
