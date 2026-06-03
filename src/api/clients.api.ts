@@ -1,31 +1,58 @@
-// clients.api.ts — ClientDetailPage and client list
+// clients.api.ts — ClientsPage list and ClientDetailPage detail
 import api from "./axios";
 
-/** GET /clients — all clients (future clients list page) */
+/** Row returned by GET /api/clients */
 export interface ClientSummary {
   id: string;
   name: string;
-  healthScore?: number;
-  status?: string;
+  company: string;
+  healthScore: number;
+  status: string;
+  contractValue: string | null;
+  projectName: string | null;
+  lastActivity: string | null;
 }
 
+/** Full detail returned by GET /api/clients/:id */
+export interface ClientDetail {
+  id: string;
+  name: string;
+  company: string;
+  projectName: string;
+  contractValue: string;
+  healthScore: number;
+  status: string;
+  createdAt: string;
+  scoreHistory: number[];
+  storyCounts: {
+    total: number;
+    bugs: number;
+    features: number;
+    changes: number;
+  };
+  recentMessages: Array<{
+    id: string;
+    text: string;
+    aiProcessed: boolean;
+  }>;
+  commitments: Array<{
+    id: string;
+    text: string;
+    status: "open" | "done" | "overdue";
+  }>;
+  meetingCount: number;
+}
+
+/** GET /api/clients — list all clients for the organisation */
 export async function getAllClients(): Promise<ClientSummary[]> {
   const { data } = await api.get<ClientSummary[]>("/clients");
   return data;
 }
 
-/** GET /clients/:id — full client profile for ClientDetailPage */
-export async function getClientById<T = Record<string, unknown>>(
-  id: string,
-): Promise<T> {
-  const { data } = await api.get<T>(`/clients/${id}`);
-  return data;
-}
-
-/** GET /clients/:id/health — health score history and breakdown */
-export async function getClientHealthById<T = Record<string, unknown>>(
-  id: string,
-): Promise<T> {
-  const { data } = await api.get<T>(`/clients/${id}/health`);
-  return data;
+/** GET /api/clients/:id — full client detail */
+export async function getClientById(id: string): Promise<ClientDetail> {
+  const { data } = await api.get<{ success: boolean; client: ClientDetail }>(
+    `/clients/${id}`,
+  );
+  return data.client;
 }

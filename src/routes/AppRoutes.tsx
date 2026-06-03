@@ -15,6 +15,7 @@ import ReviewQueuePage from "../pages/review/ReviewQueuePage";
 import DocumentsPage from "../pages/documents/DocumentsPage";
 import MeetingsPage from "../pages/meetings/MeetingsPage";
 import AdoStoriesPage from "../pages/ado/AdoStoriesPage";
+import ClientsPage from "../pages/clients/ClientsPage";
 import ClientDetailPage from "../pages/clients/ClientDetailPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import SettingsPage from "../pages/settings/SettingsPage";
@@ -112,10 +113,14 @@ export default function AppRoutes() {
         }
       />
 
-      {/* /clients — default client when no id in URL (sidebar "Clients" link) */}
+      {/* /clients — list all clients */}
       <Route
         path="/clients"
-        element={<Navigate to="/clients/techcorp" replace />}
+        element={
+          <ProtectedApp>
+            <ClientsPage />
+          </ProtectedApp>
+        }
       />
 
       {/* /clients/:id — single client health detail; :id is techcorp, startupxyz, etc. */}
