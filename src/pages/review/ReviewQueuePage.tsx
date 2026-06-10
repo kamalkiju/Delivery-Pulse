@@ -10,7 +10,8 @@ interface AcItem {
 }
 
 interface Story {
-  _id: string;
+  _id?: string;
+  id?: string;
   storyTitle?: string;
   title: string;
   type: string;
@@ -55,6 +56,9 @@ const priorityColors: Record<string, string> = {
 };
 
 const defaultTypeColor = typeColors.Story;
+
+/** Safely resolve a story's ID regardless of whether it comes from the DTO (id) or raw MongoDB (_id). */
+const sid = (story: Story): string => story._id ?? story.id ?? "";
 
 // ── Empty state ──────────────────────────────────────────────────────────────
 
@@ -177,7 +181,7 @@ const ReviewQueuePage = () => {
   const handleSaveEdit = async () => {
     if (!editingStory) return;
     try {
-      await api.patch(`/stories/${editingStory._id}`, {
+      await api.patch(`/stories/${sid(editingStory)}`, {
         title:                      editForm.storyTitle,
         storyTitle:                 editForm.storyTitle,
         type:                       editForm.type,
@@ -201,7 +205,8 @@ const ReviewQueuePage = () => {
 
   const renderStoryCard = (story: Story, tabSource: string) => {
     const tc = typeColors[story.type] ?? defaultTypeColor;
-    const isExpanded = expandedStories[story._id];
+    const storyId = sid(story);
+    const isExpanded = expandedStories[storyId];
     const acItems: AcItem[] = (story.acceptanceCriteriaFormatted?.length
       ? story.acceptanceCriteriaFormatted
       : (story.acceptanceCriteria ?? []).map((ac, i) => ({
@@ -212,7 +217,7 @@ const ReviewQueuePage = () => {
 
     return (
       <div
-        key={story._id}
+        key={storyId}
         style={{
           backgroundColor: "#fff",
           borderRadius: 12,
@@ -229,7 +234,7 @@ const ReviewQueuePage = () => {
               {story.type}
             </span>
             <span style={{ backgroundColor: "#f1f5f9", color: "#475569", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
-              DP-{story._id.slice(-4).toUpperCase()}
+              DP-{storyId.slice(-4).toUpperCase()}
             </span>
             <span style={{ backgroundColor: "#f0f0ff", color: "#6d28d9", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
               ✨ AI Generated
@@ -271,7 +276,7 @@ const ReviewQueuePage = () => {
             <div style={{ marginBottom: 12 }}>
               <button
                 type="button"
-                onClick={() => toggleExpand(story._id)}
+                onClick={() => toggleExpand(storyId)}
                 style={{ background: "none", border: "none", color: "#0088ff", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}
               >
                 {isExpanded ? "▼" : "▶"} Acceptance Criteria ({acItems.length})
@@ -305,8 +310,8 @@ const ReviewQueuePage = () => {
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button type="button" onClick={() => handleEditClick(story)} style={{ padding: "6px 16px", backgroundColor: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
-              <button type="button" onClick={() => handleReject(story._id)} style={{ padding: "6px 16px", backgroundColor: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
-              <button type="button" onClick={() => handleApprove(story._id)} style={{ padding: "6px 16px", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Approve</button>
+              <button type="button" onClick={() => handleReject(storyId)} style={{ padding: "6px 16px", backgroundColor: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
+              <button type="button" onClick={() => handleApprove(storyId)} style={{ padding: "6px 16px", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Approve</button>
             </div>
           </div>
         </div>
@@ -317,7 +322,7 @@ const ReviewQueuePage = () => {
   // ── ADO card ───────────────────────────────────────────────────────────────
 
   const renderAdoCard = (story: Story) => (
-    <div key={story._id} style={{ backgroundColor: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: "16px 20px", borderLeft: "4px solid #16a34a", marginBottom: 16 }}>
+    <div key={sid(story)} style={{ backgroundColor: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: "16px 20px", borderLeft: "4px solid #16a34a", marginBottom: 16 }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         <span style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>✅ Approved</span>
         {story.adoId && (

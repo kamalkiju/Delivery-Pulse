@@ -48,26 +48,40 @@ export function toReviewStoryDto(doc) {
 
   const id = doc._id.toString();
 
+  // Normalise type to Title Case so frontend typeColors map works for both
+  // DTO stories (review tabs) and raw MongoDB stories (ADO tab).
+  const typeMap = { bug: "Bug", story: "Story", feature: "Feature", task: "Task" };
+  const rawType = (doc.type ?? "Story");
+  const normalisedType = typeMap[rawType.toLowerCase()] ?? rawType;
+
   return {
+    _id: id,
     id,
     ticketId: `DP-${id.slice(-4).toUpperCase()}`,
     storyTitle: doc.storyTitle ?? doc.title,
     title: doc.storyTitle ?? doc.title,
     description: doc.description ?? "",
-    type: mapTypeToUi(doc.type),
+    type: normalisedType,
     priority: doc.priority ?? "Medium",
-    source: mapSourceToUi(doc.source),
+    source: doc.source ?? "slack",
     sourceQuote: doc.sourceQuote ?? "",
     acceptanceCriteria: doc.acceptanceCriteria ?? [],
     acceptanceCriteriaFormatted: doc.acceptanceCriteriaFormatted ?? [],
     releaseNotes: doc.releaseNotes ?? "",
     client: clientName,
-    clientId:
-      client && typeof client === "object"
-        ? client._id.toString()
-        : doc.clientId?.toString(),
+    // Return clientId as object so frontend can use clientId?.name directly
+    clientId: client && typeof client === "object"
+      ? { _id: client._id?.toString(), name: client.name, company: client.company }
+      : null,
+    projectId: doc.projectId && typeof doc.projectId === "object"
+      ? { _id: doc.projectId._id?.toString(), name: doc.projectId.name, color: doc.projectId.color }
+      : null,
     sprint: doc.sprint ?? "Backlog",
-    status: "pending",
+    status: doc.status ?? "pending-review",
+    createdAt: doc.createdAt,
+    approvedAt: doc.approvedAt,
+    updatedAt: doc.updatedAt,
+    adoId: doc.adoId ?? null,
     timeAgo: formatTimeAgo(doc.createdAt),
     regressionWarning: doc.regressionOf
       ? "Possible regression of a prior story"
