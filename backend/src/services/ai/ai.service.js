@@ -138,7 +138,7 @@ ${messageText || "(no text — see attached image if any)"}
   try {
     // messages.create = send user message to Claude and receive assistant reply
     const response = await claude.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5",
       max_tokens: 2000,
       messages: [{ role: "user", content }],
     });
