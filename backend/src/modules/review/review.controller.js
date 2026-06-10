@@ -9,6 +9,7 @@
 
 import Story from "../../models/Story.model.js";
 import Client from "../../models/Client.model.js";
+import SlackWorkspace from "../../models/SlackWorkspace.model.js";
 import * as storyService from "../../services/story/story.service.js";
 import { resolveWorkspaceContext } from "../../utils/workspaceContext.js";
 import { buildWorkspaceStoryFilter } from "../../utils/workspaceStoryFilter.js";
@@ -102,55 +103,45 @@ export async function getReviewQueue(req, res) {
 
     const wsContext = await resolveWorkspaceContext(req, organisationId);
 
-    // Dual-filter: stories saved with this org's ID  OR  stories whose clientId
-    // belongs to a client in this org. The clientId fallback catches stories
-    // created under a previous organisationId when an account was recreated
-    // (same pattern as the Slack messages fix).
-    const orgClients = await Client.find({ organisationId }).select("_id").lean();
-    const orgClientIds = orgClients.map((c) => c._id);
+    // Collect every organisationId linked to an active workspace so stories
+    // saved under a previous org (reconnected workspace) are still visible.
+    const activeWorkspaces = await SlackWorkspace.find({ isActive: true })
+      .select("organisationId")
+      .lean();
 
-    const baseFilter =
-      orgClientIds.length > 0
-        ? { $or: [{ organisationId }, { clientId: { $in: orgClientIds } }] }
-        : { organisationId };
+    const orgIds = [
+      ...new Set([
+        organisationId.toString(),
+        ...activeWorkspaces
+          .map((w) => w.organisationId?.toString())
+          .filter(Boolean),
+      ]),
+    ];
 
-    const storyFilter = { ...baseFilter, status: "pending-review" };
+    console.log("[reviewQueue] user org:", organisationId, "| searching orgIds:", orgIds);
 
-    console.log("[reviewQueue] org:", organisationId, "| clients:", orgClientIds.length);
-
-    // Multi-workspace: when x-workspace-id is set, narrow to that Slack team's clients
-    if (wsContext.teamId) {
-      const workspaceClause = await buildWorkspaceStoryFilter(
-        organisationId,
-        wsContext.teamId,
-      );
-      Object.assign(storyFilter, workspaceClause);
-    }
+    const storyFilter = {
+      status: "pending-review",
+      organisationId: { $in: orgIds },
+    };
 
     const stories = await Story.find(storyFilter)
+      .populate("clientId", "name company organisationId")
       .sort({ createdAt: -1 })
-      .populate("clientId", "name company organisationId");
+      .limit(100);
 
     console.log("[reviewQueue] found:", stories.length, "pending stories");
 
-    // Defensive: exclude any story whose populated client belongs to a different org
-    const safeStories = stories.filter((s) => {
-      const clientOrg =
-        s.clientId &&
-        typeof s.clientId === "object" &&
-        s.clientId.organisationId?.toString();
-      return !clientOrg || clientOrg === organisationId.toString();
-    });
-
-    // Stats for the top bar (Pending / Approved Today / Rejected) — same workspace scope
-    const stats = await storyService.getReviewQueueStats(
-      organisationId,
-      wsContext.teamId,
-    );
+    const stats = {
+      pending: stories.length,
+      approvedToday: 0,
+      rejected: 0,
+      edited: 0,
+    };
 
     return res.status(200).json({
       success: true,
-      stories: safeStories.map(toReviewStoryDto),
+      stories: stories.map(toReviewStoryDto),
       stats,
       workspace: wsContext.workspace
         ? {

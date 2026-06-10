@@ -158,6 +158,8 @@ async function processIncomingMessage({ message, say, client, workspace }) {
     `[slack] Message saved from ${channelName} (${isClientMapped ? "mapped to client" : "not mapped"})`,
   );
 
+  console.log(`[slack] isClientChannel: ${channelRecord.isClientChannel} | clientId: ${channelRecord.clientId ?? "none"}`);
+
   // ── AI processing + story creation only for mapped client channels ─────────
   if (!isClientMapped || !clientRecord) {
     console.log(

@@ -132,6 +132,8 @@ Return ONLY the JSON object above with all fields filled in properly.`;
   }
 
   try {
+    console.log("[ai] using model: claude-sonnet-4-5");
+    console.log("[ai] API key starts with:", process.env.CLAUDE_API_KEY?.substring(0, 10));
     const response = await claude.messages.create({
       model: "claude-sonnet-4-5",
       max_tokens: 2000,
