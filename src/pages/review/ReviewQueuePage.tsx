@@ -16,6 +16,7 @@ interface Story {
   title: string;
   type: string;
   priority: string;
+  source?: string;
   description?: string;
   sourceQuote?: string;
   acceptanceCriteria?: (string | AcItem)[];
@@ -111,33 +112,32 @@ const ReviewQueuePage = () => {
 
   const fetchAllStories = async () => {
     setIsLoading(true);
-    const projectId = localStorage.getItem("activeProjectId") ?? "";
-    const pp = projectId ? `&projectId=${projectId}` : "";
+    try {
+      const projectId = localStorage.getItem("activeProjectId") ?? "";
+      const pp = projectId ? `&projectId=${projectId}` : "";
 
-    // Use allSettled so one failing call never wipes the other tabs
-    const [slackRes, docRes, adoRes] = await Promise.allSettled([
-      api.get(`/review?source=slack${pp}`),
-      api.get(`/review?source=document${pp}`),
-      api.get(`/stories?status=approved${pp}`),
-    ]);
+      // Single call for all pending stories — split into tabs by source on the frontend.
+      // This avoids multiple concurrent tunnel/CORS requests that can fail independently.
+      const res = await api.get(`/review${pp ? `?${pp.slice(1)}` : ""}`);
+      const all: Story[] = res.data.stories ?? [];
 
-    if (slackRes.status === "fulfilled") {
-      setSlackStories(slackRes.value.data.stories ?? []);
-    } else {
-      console.error("[ReviewQueue] slack fetch failed:", slackRes.reason?.message);
-    }
-    if (docRes.status === "fulfilled") {
-      setDocumentStories(docRes.value.data.stories ?? []);
-    } else {
-      console.error("[ReviewQueue] doc fetch failed:", docRes.reason?.message);
-    }
-    if (adoRes.status === "fulfilled") {
-      setAdoStories(adoRes.value.data.stories ?? []);
-    } else {
-      console.error("[ReviewQueue] ado fetch failed:", adoRes.reason?.message);
-    }
+      setSlackStories(all.filter((s) => !s.source || s.source === "slack" || s.source === "Slack"));
+      setDocumentStories(all.filter((s) => s.source === "document" || s.source === "doc"));
 
-    setIsLoading(false);
+      // Fetch approved stories for ADO tab separately
+      try {
+        const adoRes = await api.get(`/stories?status=approved${pp}`);
+        const adoAll: Story[] = adoRes.data.stories ?? [];
+        setAdoStories(adoAll);
+      } catch {
+        // ADO tab failing shouldn't break the main tabs
+        setAdoStories([]);
+      }
+    } catch (err) {
+      console.error("[ReviewQueue] fetch error:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
