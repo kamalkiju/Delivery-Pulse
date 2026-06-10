@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Story from "../../models/Story.model.js";
+import Client from "../../models/Client.model.js";
 import * as storyService from "../../services/story/story.service.js";
 import { resolveWorkspaceContext } from "../../utils/workspaceContext.js";
 import { buildWorkspaceStoryFilter } from "../../utils/workspaceStoryFilter.js";
@@ -101,12 +102,23 @@ export async function getReviewQueue(req, res) {
 
     const wsContext = await resolveWorkspaceContext(req, organisationId);
 
-    const storyFilter = {
-      organisationId,
-      status: "pending-review",
-    };
+    // Dual-filter: stories saved with this org's ID  OR  stories whose clientId
+    // belongs to a client in this org. The clientId fallback catches stories
+    // created under a previous organisationId when an account was recreated
+    // (same pattern as the Slack messages fix).
+    const orgClients = await Client.find({ organisationId }).select("_id").lean();
+    const orgClientIds = orgClients.map((c) => c._id);
 
-    // Multi-workspace: when x-workspace-id is set, only stories from that Slack team
+    const baseFilter =
+      orgClientIds.length > 0
+        ? { $or: [{ organisationId }, { clientId: { $in: orgClientIds } }] }
+        : { organisationId };
+
+    const storyFilter = { ...baseFilter, status: "pending-review" };
+
+    console.log("[reviewQueue] org:", organisationId, "| clients:", orgClientIds.length);
+
+    // Multi-workspace: when x-workspace-id is set, narrow to that Slack team's clients
     if (wsContext.teamId) {
       const workspaceClause = await buildWorkspaceStoryFilter(
         organisationId,
@@ -115,12 +127,13 @@ export async function getReviewQueue(req, res) {
       Object.assign(storyFilter, workspaceClause);
     }
 
-    // Organisation isolation: only this tenant's pending stories (never another company's queue)
     const stories = await Story.find(storyFilter)
       .sort({ createdAt: -1 })
       .populate("clientId", "name company organisationId");
 
-    // Double-check populate did not leak cross-org clients (defensive)
+    console.log("[reviewQueue] found:", stories.length, "pending stories");
+
+    // Defensive: exclude any story whose populated client belongs to a different org
     const safeStories = stories.filter((s) => {
       const clientOrg =
         s.clientId &&

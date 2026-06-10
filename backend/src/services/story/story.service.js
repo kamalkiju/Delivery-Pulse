@@ -185,7 +185,16 @@ export async function getReviewQueueStats(organisationId, teamId = null) {
     ? await buildWorkspaceStoryFilter(organisationId, teamId)
     : {};
 
-  const base = { organisationId, ...workspaceClause };
+  // Same dual-filter as getReviewQueue: match by organisationId OR by client ownership
+  const orgClients = await Client.find({ organisationId }).select("_id").lean();
+  const orgClientIds = orgClients.map((c) => c._id);
+
+  const orgClause =
+    orgClientIds.length > 0
+      ? { $or: [{ organisationId }, { clientId: { $in: orgClientIds } }] }
+      : { organisationId };
+
+  const base = { ...orgClause, ...workspaceClause };
 
   const [pending, approvedToday, rejected] = await Promise.all([
     Story.countDocuments({ ...base, status: "pending-review" }),
