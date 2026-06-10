@@ -61,6 +61,18 @@ const defaultTypeColor = typeColors.Story;
 /** Safely resolve a story's ID regardless of whether it comes from the DTO (id) or raw MongoDB (_id). */
 const sid = (story: Story): string => story._id ?? story.id ?? "";
 
+/** Parse review API payload — backend may use data, stories, or reviews key */
+function extractStoriesFromReviewResponse(payload: unknown): Story[] {
+  if (Array.isArray(payload)) return payload as Story[];
+  if (!payload || typeof payload !== "object") return [];
+
+  const body = payload as Record<string, unknown>;
+  if (Array.isArray(body.data)) return body.data as Story[];
+  if (Array.isArray(body.stories)) return body.stories as Story[];
+  if (Array.isArray(body.reviews)) return body.reviews as Story[];
+  return [];
+}
+
 // ── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyState({
@@ -119,7 +131,8 @@ const ReviewQueuePage = () => {
       // Single call for all pending stories — split into tabs by source on the frontend.
       // This avoids multiple concurrent tunnel/CORS requests that can fail independently.
       const res = await api.get(`/review${pp ? `?${pp.slice(1)}` : ""}`);
-      const all: Story[] = res.data.stories ?? [];
+      console.log("[ReviewQueue] raw response:", res.data);
+      const all = extractStoriesFromReviewResponse(res.data);
 
       setSlackStories(all.filter((s) => !s.source || s.source === "slack" || s.source === "Slack"));
       setDocumentStories(all.filter((s) => s.source === "document" || s.source === "doc"));

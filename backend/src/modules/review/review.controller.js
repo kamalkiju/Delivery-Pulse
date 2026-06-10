@@ -152,6 +152,8 @@ export async function getReviewQueue(req, res) {
 
     return res.status(200).json({
       success: true,
+      data: stories.map(toReviewStoryDto),
+      // legacy key — some clients still read stories
       stories: stories.map(toReviewStoryDto),
       stats,
       workspace: null,

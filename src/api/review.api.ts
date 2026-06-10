@@ -58,9 +58,13 @@ export async function fetchReviewQueue(): Promise<{
   stats: ReviewQueueStats;
   workspace: ReviewWorkspaceInfo | null;
 }> {
-  const { data } = await api.get<ReviewListResponse>("/review");
+  const { data } = await api.get<ReviewListResponse & { data?: ReviewStory[] }>("/review");
+  const stories =
+    (Array.isArray(data.data) ? data.data : null) ??
+    data.stories ??
+    [];
   return {
-    stories: data.stories ?? [],
+    stories,
     stats: data.stats ?? {
       pending: 0,
       approvedToday: 0,
