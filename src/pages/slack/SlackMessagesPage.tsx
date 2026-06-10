@@ -330,10 +330,13 @@ const SlackMessagesPage = () => {
   const statsClient = messages.filter((m) => m.isExternal).length;
   const statsStories = messages.filter((m) => m.aiProcessed).length;
 
-  const selectedWorkspaceId = localStorage.getItem("activeWorkspaceId") ?? "";
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(
+    localStorage.getItem("activeWorkspaceId") ?? ""
+  );
 
-  const handleWorkspaceChange = (teamId: string) => {
-    if (teamId) localStorage.setItem("activeWorkspaceId", teamId);
+  const handleWorkspaceChange = (workspaceId: string) => {
+    setSelectedWorkspaceId(workspaceId);
+    if (workspaceId) localStorage.setItem("activeWorkspaceId", workspaceId);
     else localStorage.removeItem("activeWorkspaceId");
     window.dispatchEvent(new Event("workspace-changed"));
   };
@@ -371,7 +374,7 @@ const SlackMessagesPage = () => {
         >
           <option value="">All Workspaces</option>
           {workspaces.map((ws) => (
-            <option key={ws.id} value={ws.teamId}>
+            <option key={ws.id} value={ws.id}>
               {ws.teamName}
             </option>
           ))}
