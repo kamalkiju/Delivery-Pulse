@@ -330,8 +330,57 @@ const SlackMessagesPage = () => {
   const statsClient = messages.filter((m) => m.isExternal).length;
   const statsStories = messages.filter((m) => m.aiProcessed).length;
 
+  const selectedWorkspaceId = localStorage.getItem("activeWorkspaceId") ?? "";
+
+  const handleWorkspaceChange = (teamId: string) => {
+    if (teamId) localStorage.setItem("activeWorkspaceId", teamId);
+    else localStorage.removeItem("activeWorkspaceId");
+    window.dispatchEvent(new Event("workspace-changed"));
+  };
+
   return (
     <AppShell pageTitle="Slack" showWorkspaceContext>
+      {/* Workspace selector bar */}
+      <div
+        style={{
+          backgroundColor: "#fff",
+          border: `1px solid ${colors["border-default"]}`,
+          borderRadius: "8px",
+          padding: `${spacing[3]} ${spacing[4]}`,
+          display: "flex",
+          alignItems: "center",
+          gap: spacing[4],
+          marginBottom: spacing[4],
+        }}
+      >
+        <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151", flexShrink: 0 }}>
+          Workspace:
+        </span>
+        <select
+          value={selectedWorkspaceId}
+          onChange={(e) => handleWorkspaceChange(e.target.value)}
+          style={{
+            padding: "6px 12px",
+            border: `1px solid ${colors["border-default"]}`,
+            borderRadius: 8,
+            fontSize: 13,
+            color: "#374151",
+            cursor: "pointer",
+            minWidth: 200,
+          }}
+        >
+          <option value="">All Workspaces</option>
+          {workspaces.map((ws) => (
+            <option key={ws.id} value={ws.teamId}>
+              {ws.teamName}
+            </option>
+          ))}
+        </select>
+        <span style={{ fontSize: 12, color: "#94a3b8", marginLeft: "auto" }}>
+          🟢 Live · Updates every 30 seconds
+        </span>
+      </div>
+
       {/* Stats bar */}
       <div
         style={{

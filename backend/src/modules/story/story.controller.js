@@ -7,8 +7,43 @@
 //   updateStory  → Save Changes (edit panel)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import Story from "../../models/Story.model.js";
+import SlackWorkspace from "../../models/SlackWorkspace.model.js";
 import * as storyService from "../../services/story/story.service.js";
 import { toReviewStoryDto } from "../review/review.controller.js";
+
+const getOrgId = (req) => req.user?.orgId ?? req.user?.organisationId;
+
+/** GET /api/stories — list stories with optional status/source/projectId filters */
+export async function getStories(req, res) {
+  try {
+    const organisationId = getOrgId(req);
+    const { status, source, projectId } = req.query;
+
+    const workspaces = await SlackWorkspace.find({ isActive: true }).select("organisationId").lean();
+    const orgIds = [
+      ...new Set([
+        organisationId.toString(),
+        ...workspaces.map((w) => w.organisationId?.toString()).filter(Boolean),
+      ]),
+    ];
+
+    const filter = { organisationId: { $in: orgIds } };
+    if (status) filter.status = status;
+    if (source) filter.source = source;
+    if (projectId) filter.projectId = projectId;
+
+    const stories = await Story.find(filter)
+      .populate("clientId", "name company")
+      .populate("projectId", "name color")
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    return res.json({ success: true, stories });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
 
 /**
  * approveStory — PATCH /api/stories/:id/approve

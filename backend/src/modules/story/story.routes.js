@@ -18,11 +18,15 @@ import {
   approveStory,
   rejectStory,
   updateStory,
+  getStories,
 } from "./story.controller.js";
 
 const router = express.Router();
 
 router.use(authMiddleware);
+
+// GET /api/stories — list with optional ?status=&source=&projectId= filters
+router.get("/", getStories);
 
 // PATCH /api/stories/:id/approve — BA clicks green Approve on a card
 router.patch("/:id/approve", approveStory);

@@ -31,6 +31,7 @@ import meetingsRoutes from "./modules/meetings/meetings.routes.js";
 import clientsRoutes from "./modules/clients/clients.routes.js";
 import reportsRoutes from "./modules/reports/reports.routes.js";
 import settingsRoutes from "./modules/settings/settings.routes.js";
+import projectRoutes from "./modules/project/project.routes.js";
 
 // JSON 404 for unregistered paths
 import notFoundMiddleware from "./middlewares/notFound.middleware.js";
@@ -92,6 +93,7 @@ app.use("/api/meetings", meetingsRoutes);
 app.use("/api/clients", clientsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/projects", projectRoutes);
 
 // Health check for load balancers and uptime monitors
 app.get("/health", (_req, res) => {

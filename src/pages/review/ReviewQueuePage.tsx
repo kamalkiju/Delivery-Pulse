@@ -1,1263 +1,555 @@
-// ─────────────────────────────────────────────
-// ReviewQueuePage — BA story review queue before ADO publish
-// Approve / edit / reject AI-generated stories
-// ─────────────────────────────────────────────
-
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { useWorkspaceChange } from "../../hooks/useWorkspaceChange";
-import { useActiveWorkspace } from "../../hooks/useActiveWorkspace";
-import type { ReviewWorkspaceInfo } from "../../api/review.api";
-import { Check, Sparkles, X } from "lucide-react";
-import axios from "axios";
+import { useEffect, useState } from "react";
 import AppShell from "../../components/layout/AppShell";
-import StatusBadge, { type BadgeVariant } from "../../components/ui/StatusBadge";
-import TicketId from "../../components/ui/TicketId";
-import {
-  approveStory as approveStoryApi,
-  editStory,
-  fetchReviewQueue,
-  rejectStory as rejectStoryApi,
-  type ReviewQueueStats,
-  type ReviewStory as ApiReviewStory,
-} from "../../api/review.api";
-import {
-  borderRadius,
-  colors,
-  spacing,
-  typography,
-} from "../../styles/tokens";
+import api from "../../api/axios";
 
-// ── Types ────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
-type StoryType = "bug" | "story" | "feature" | "task";
-type StorySource = "slack" | "doc" | "meeting";
-type StoryStatus = "pending" | "approved" | "rejected" | "edited";
-type Priority = "Critical" | "High" | "Medium" | "Low";
-
-interface ReviewStory extends ApiReviewStory {
-  type: StoryType;
-  source: StorySource;
-  priority: Priority;
-  status: StoryStatus;
+interface AcItem {
+  id: string;
+  scenario: string;
 }
 
-/** Auto-refresh interval so new Slack stories appear without reload */
-const REFRESH_MS = 20_000;
-
-// Left border per work item type (exact spec colors)
-const typeBorderColor: Record<StoryType, string> = {
-  bug: "#DC2626",
-  story: "#2563EB",
-  feature: "#16A34A",
-  task: "#D97706",
-};
-
-const typeBadgeVariant: Record<StoryType, BadgeVariant> = {
-  bug: "critical",
-  story: "info",
-  feature: "healthy",
-  task: "at-risk",
-};
-
-const typeLabelMap: Record<StoryType, string> = {
-  bug: "Bug",
-  story: "Story",
-  feature: "Feature",
-  task: "Task",
-};
-
-const sourceLabelMap: Record<StorySource, string> = {
-  slack: "Slack",
-  doc: "Document",
-  meeting: "Meeting",
-};
-
-const priorityVariant: Record<Priority, BadgeVariant> = {
-  Critical: "critical",
-  High: "at-risk",
-  Medium: "info",
-  Low: "healthy",
-};
-
-function mapApiStory(s: ApiReviewStory): ReviewStory {
-  const type = (["bug", "story", "feature", "task"].includes(s.type)
-    ? s.type
-    : "story") as StoryType;
-  const source = (["slack", "doc", "meeting"].includes(s.source)
-    ? s.source
-    : "slack") as StorySource;
-  const priority = (
-    ["Critical", "High", "Medium", "Low"].includes(s.priority)
-      ? s.priority
-      : "Medium"
-  ) as Priority;
-
-  return {
-    ...s,
-    type,
-    source,
-    priority,
-    status: "pending",
-    acceptanceCriteria: s.acceptanceCriteria ?? [],
-    sourceQuote: s.sourceQuote ?? "",
-    sprint: s.sprint ?? "Backlog",
-  };
+interface Story {
+  _id: string;
+  storyTitle?: string;
+  title: string;
+  type: string;
+  priority: string;
+  description?: string;
+  sourceQuote?: string;
+  acceptanceCriteria?: (string | AcItem)[];
+  acceptanceCriteriaFormatted?: AcItem[];
+  releaseNotes?: string;
+  sprint?: string;
+  adoId?: string;
+  approvedAt?: string;
+  updatedAt?: string;
+  createdAt?: string;
+  clientId?: { name: string; company?: string } | null;
+  projectId?: { name: string; color?: string } | null;
 }
 
-// ── Page component ───────────────────────────────────────────
+interface EditForm {
+  storyTitle: string;
+  type: string;
+  priority: string;
+  description: string;
+  acceptanceCriteria: AcItem[];
+  releaseNotes: string;
+}
 
-type ToastState = { message: string; variant: "success" | "error" } | null;
+// ── Colour maps ──────────────────────────────────────────────────────────────
 
-const defaultStats: ReviewQueueStats = {
-  pending: 0,
-  approvedToday: 0,
-  rejected: 0,
-  edited: 0,
+const typeColors: Record<string, { bg: string; text: string; border: string }> = {
+  Bug:     { bg: "#fef2f2", text: "#dc2626", border: "#dc2626" },
+  Story:   { bg: "#eff6ff", text: "#2563eb", border: "#2563eb" },
+  Feature: { bg: "#f0fdf4", text: "#16a34a", border: "#16a34a" },
+  Task:    { bg: "#fffbeb", text: "#d97706", border: "#d97706" },
 };
+
+const priorityColors: Record<string, string> = {
+  Critical: "#dc2626",
+  High:     "#ea580c",
+  Medium:   "#d97706",
+  Low:      "#16a34a",
+};
+
+const defaultTypeColor = typeColors.Story;
+
+// ── Empty state ──────────────────────────────────────────────────────────────
+
+function EmptyState({
+  icon,
+  title,
+  subtitle,
+  buttonText,
+  buttonAction,
+}: {
+  icon: string;
+  title: string;
+  subtitle: string;
+  buttonText?: string;
+  buttonAction?: () => void;
+}) {
+  return (
+    <div style={{ textAlign: "center", padding: 60 }}>
+      <div style={{ fontSize: 48, marginBottom: 16 }}>{icon}</div>
+      <p style={{ fontSize: 16, color: "#64748b", fontWeight: 500, margin: "0 0 8px" }}>{title}</p>
+      <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 20px" }}>{subtitle}</p>
+      {buttonText && buttonAction && (
+        <button
+          type="button"
+          onClick={buttonAction}
+          style={{ backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", cursor: "pointer", fontSize: 14 }}
+        >
+          {buttonText}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 const ReviewQueuePage = () => {
-  const [stories, setStories] = useState<ReviewStory[]>([]);
-  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("slack");
+  const [slackStories, setSlackStories]       = useState<Story[]>([]);
+  const [documentStories, setDocumentStories] = useState<Story[]>([]);
+  const [adoStories, setAdoStories]           = useState<Story[]>([]);
+  const [isLoading, setIsLoading]             = useState(true);
+  const [editingStory, setEditingStory]       = useState<Story | null>(null);
   const [isEditPanelOpen, setIsEditPanelOpen] = useState(false);
-  const [checkedIds, setCheckedIds] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [queueStats, setQueueStats] = useState<ReviewQueueStats>(defaultStats);
-  const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [toast, setToast] = useState<ToastState>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [reviewWorkspace, setReviewWorkspace] =
-    useState<ReviewWorkspaceInfo | null>(null);
-  const { displayName: activeWorkspaceLabel } = useActiveWorkspace();
+  const [editForm, setEditForm]               = useState<EditForm>({
+    storyTitle: "", type: "Story", priority: "Medium",
+    description: "", acceptanceCriteria: [], releaseNotes: "",
+  });
+  const [expandedStories, setExpandedStories] = useState<Record<string, boolean>>({});
 
-  const [editDraft, setEditDraft] = useState<{
-    storyTitle: string;
-    description: string;
-    type: StoryType;
-    priority: Priority;
-    acceptanceCriteriaFormatted: { id: string; scenario: string }[];
-    releaseNotes: string;
-    sprint: string;
-  } | null>(null);
-
-  const showToast = (message: string, variant: "success" | "error" = "success") => {
-    setToast({ message, variant });
-    window.setTimeout(() => setToast(null), 4000);
+  const fetchAllStories = async () => {
+    setIsLoading(true);
+    try {
+      const projectId = localStorage.getItem("activeProjectId") ?? "";
+      const pp = projectId ? `&projectId=${projectId}` : "";
+      const [slackRes, docRes, adoRes] = await Promise.all([
+        api.get(`/review?source=slack${pp}`),
+        api.get(`/review?source=document${pp}`),
+        api.get(`/stories?status=approved${pp}`),
+      ]);
+      setSlackStories(slackRes.data.stories ?? []);
+      setDocumentStories(docRes.data.stories ?? []);
+      setAdoStories(adoRes.data.stories ?? []);
+    } catch (err) {
+      console.error("[ReviewQueue] fetch error:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  /** GET /api/review — load pending stories + stats; silent=true skips full-page skeleton */
-  const loadStories = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const { stories: data, stats, workspace } = await fetchReviewQueue();
-      setStories(data.map(mapApiStory));
-      setQueueStats(stats);
-      setReviewWorkspace(workspace);
-    } catch (err) {
-      if (!silent) {
-        setError(
-          axios.isAxiosError(err)
-            ? (err.response?.data?.message as string) ??
-                "Could not load review queue."
-            : "Could not load review queue.",
-        );
-      }
-    } finally {
-      if (!silent) setIsLoading(false);
-    }
+  useEffect(() => {
+    fetchAllStories();
+    const iv = setInterval(fetchAllStories, 20_000);
+    window.addEventListener("project-changed", fetchAllStories);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener("project-changed", fetchAllStories);
+    };
   }, []);
 
-  useEffect(() => {
-    loadStories(false);
-    const intervalId = window.setInterval(() => loadStories(true), REFRESH_MS);
-    return () => window.clearInterval(intervalId);
-  }, [loadStories]);
+  const handleApprove = async (storyId: string) => {
+    try {
+      await api.patch(`/stories/${storyId}/approve`);
+      fetchAllStories();
+    } catch {
+      alert("Failed to approve story");
+    }
+  };
 
-  useWorkspaceChange(() => loadStories(true));
+  const handleReject = async (storyId: string) => {
+    try {
+      await api.patch(`/stories/${storyId}/reject`);
+      fetchAllStories();
+    } catch {
+      alert("Failed to reject story");
+    }
+  };
 
-  const pendingStories = stories.filter((s) => s.status === "pending");
-  const editingStory = stories.find((s) => s.id === selectedStoryId);
-
-  const openEditPanel = (storyId: string) => {
-    const story = stories.find((s) => s.id === storyId);
-    if (!story) return;
-    setSelectedStoryId(storyId);
-    const acFormatted: { id: string; scenario: string }[] =
-      story.acceptanceCriteriaFormatted && story.acceptanceCriteriaFormatted.length > 0
-        ? story.acceptanceCriteriaFormatted.map((ac) => ({
-            id: ac.id ?? "",
-            scenario: ac.scenario ?? [ac.given, ac.when, ac.then].filter(Boolean).join(" ") ?? "",
-          }))
-        : story.acceptanceCriteria.map((ac, i) => ({ id: `AC ${i + 1}`, scenario: ac }));
-
-    setEditDraft({
-      storyTitle: story.storyTitle ?? story.title,
-      description: story.description ?? story.sourceQuote ?? "",
-      type: story.type,
-      priority: story.priority,
-      acceptanceCriteriaFormatted: acFormatted,
+  const handleEditClick = (story: Story) => {
+    setEditingStory(story);
+    const rawAcs = story.acceptanceCriteriaFormatted?.length
+      ? story.acceptanceCriteriaFormatted
+      : (story.acceptanceCriteria ?? []).map((ac, i) => ({
+          id: `AC ${i + 1}`,
+          scenario: typeof ac === "string" ? ac : ac.scenario ?? "",
+        }));
+    setEditForm({
+      storyTitle:         story.storyTitle ?? story.title ?? "",
+      type:               story.type ?? "Story",
+      priority:           story.priority ?? "Medium",
+      description:        story.description ?? "",
+      acceptanceCriteria: rawAcs.map((ac) =>
+        typeof ac === "string" ? { id: "", scenario: ac } : ac
+      ),
       releaseNotes: story.releaseNotes ?? "",
-      sprint: story.sprint ?? "Backlog",
     });
     setIsEditPanelOpen(true);
   };
 
-  const closeEditPanel = () => {
-    setIsEditPanelOpen(false);
-    setSelectedStoryId(null);
-    setEditDraft(null);
-  };
-
-  const removeFromQueue = (id: string) => {
-    setStories((prev) => prev.filter((s) => s.id !== id));
-    setCheckedIds((prev) => prev.filter((x) => x !== id));
-  };
-
-  const approveStory = async (id: string) => {
-    setActionError(null);
+  const handleSaveEdit = async () => {
+    if (!editingStory) return;
     try {
-      await approveStoryApi(id);
-      removeFromQueue(id);
-      setQueueStats((prev) => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - 1),
-        approvedToday: prev.approvedToday + 1,
-      }));
-      showToast("Story approved and pushed to ADO");
-    } catch (err) {
-      setActionError(
-        axios.isAxiosError(err)
-          ? (err.response?.data?.message as string) ?? "Approve failed."
-          : "Approve failed.",
-      );
-    }
-  };
-
-  const rejectStory = async (id: string) => {
-    setActionError(null);
-    try {
-      await rejectStoryApi(id);
-      removeFromQueue(id);
-      setQueueStats((prev) => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - 1),
-        rejected: prev.rejected + 1,
-      }));
-      showToast("Story rejected");
-    } catch (err) {
-      setActionError(
-        axios.isAxiosError(err)
-          ? (err.response?.data?.message as string) ?? "Reject failed."
-          : "Reject failed.",
-      );
-    }
-  };
-
-  const approveAllPending = async () => {
-    setActionError(null);
-    let approved = 0;
-    for (const s of [...pendingStories]) {
-      try {
-        await approveStoryApi(s.id);
-        removeFromQueue(s.id);
-        approved += 1;
-      } catch (err) {
-        setActionError(
-          axios.isAxiosError(err)
-            ? (err.response?.data?.message as string) ?? "Bulk approve failed."
-            : "Bulk approve failed.",
-        );
-        break;
-      }
-    }
-    if (approved > 0) {
-      setQueueStats((prev) => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - approved),
-        approvedToday: prev.approvedToday + approved,
-      }));
-      showToast(
-        approved === 1
-          ? "Story approved and pushed to ADO"
-          : `${approved} stories approved and pushed to ADO`,
-      );
-    }
-    setCheckedIds([]);
-  };
-
-  const approveSelected = async () => {
-    setActionError(null);
-    let approved = 0;
-    for (const id of [...checkedIds]) {
-      try {
-        await approveStoryApi(id);
-        removeFromQueue(id);
-        approved += 1;
-      } catch (err) {
-        setActionError(
-          axios.isAxiosError(err)
-            ? (err.response?.data?.message as string) ?? "Approve failed."
-            : "Approve failed.",
-        );
-        break;
-      }
-    }
-    if (approved > 0) {
-      setQueueStats((prev) => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - approved),
-        approvedToday: prev.approvedToday + approved,
-      }));
-      showToast(
-        approved === 1
-          ? "Story approved and pushed to ADO"
-          : `${approved} stories approved and pushed to ADO`,
-      );
-    }
-    setCheckedIds([]);
-  };
-
-  const toggleCheck = (id: string) => {
-    setCheckedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  };
-
-  const toggleSelectAll = () => {
-    if (checkedIds.length === pendingStories.length) {
-      setCheckedIds([]);
-    } else {
-      setCheckedIds(pendingStories.map((s) => s.id));
-    }
-  };
-
-  /** PATCH /api/stories/:id — save edits and refresh card in list */
-  const saveEdit = async () => {
-    if (!selectedStoryId || !editDraft) return;
-    setIsSaving(true);
-    setActionError(null);
-    try {
-      const updated = await editStory(selectedStoryId, {
-        storyTitle: editDraft.storyTitle,
-        title: editDraft.storyTitle,
-        description: editDraft.description,
-        type: editDraft.type,
-        priority: editDraft.priority,
-        acceptanceCriteria: editDraft.acceptanceCriteriaFormatted.map((ac) => ac.scenario),
-        acceptanceCriteriaFormatted: editDraft.acceptanceCriteriaFormatted,
-        releaseNotes: editDraft.releaseNotes,
-        sprint: editDraft.sprint,
+      await api.patch(`/stories/${editingStory._id}`, {
+        title:                      editForm.storyTitle,
+        storyTitle:                 editForm.storyTitle,
+        type:                       editForm.type,
+        priority:                   editForm.priority,
+        description:                editForm.description,
+        acceptanceCriteria:         editForm.acceptanceCriteria.map((ac) => ac.scenario),
+        acceptanceCriteriaFormatted: editForm.acceptanceCriteria,
+        releaseNotes:               editForm.releaseNotes,
       });
-      setStories((prev) =>
-        prev.map((s) =>
-          s.id === selectedStoryId ? mapApiStory(updated) : s,
-        ),
-      );
-      showToast("Story updated");
-      closeEditPanel();
-    } catch (err) {
-      setActionError(
-        axios.isAxiosError(err)
-          ? (err.response?.data?.message as string) ?? "Save failed."
-          : "Save failed.",
-      );
-    } finally {
-      setIsSaving(false);
+      setIsEditPanelOpen(false);
+      fetchAllStories();
+    } catch {
+      alert("Failed to save story");
     }
   };
 
-  const saveAndApprove = async () => {
-    if (!selectedStoryId || !editDraft) return;
-    setIsSaving(true);
-    setActionError(null);
-    try {
-      await editStory(selectedStoryId, {
-        storyTitle: editDraft.storyTitle,
-        title: editDraft.storyTitle,
-        description: editDraft.description,
-        type: editDraft.type,
-        priority: editDraft.priority,
-        acceptanceCriteria: editDraft.acceptanceCriteriaFormatted.map((ac) => ac.scenario),
-        acceptanceCriteriaFormatted: editDraft.acceptanceCriteriaFormatted,
-        releaseNotes: editDraft.releaseNotes,
-        sprint: editDraft.sprint,
-      });
-      await approveStoryApi(selectedStoryId);
-      removeFromQueue(selectedStoryId);
-      setQueueStats((prev) => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - 1),
-        approvedToday: prev.approvedToday + 1,
-      }));
-      showToast("Story approved and pushed to ADO");
-      closeEditPanel();
-    } catch (err) {
-      setActionError(
-        axios.isAxiosError(err)
-          ? (err.response?.data?.message as string) ??
-              "Save and approve failed."
-          : "Save and approve failed.",
-      );
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const toggleExpand = (id: string) =>
+    setExpandedStories((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  return (
-    <AppShell pageTitle="Review Queue" showWorkspaceContext>
+  // ── Story card ─────────────────────────────────────────────────────────────
+
+  const renderStoryCard = (story: Story, tabSource: string) => {
+    const tc = typeColors[story.type] ?? defaultTypeColor;
+    const isExpanded = expandedStories[story._id];
+    const acItems: AcItem[] = (story.acceptanceCriteriaFormatted?.length
+      ? story.acceptanceCriteriaFormatted
+      : (story.acceptanceCriteria ?? []).map((ac, i) => ({
+          id: `AC ${i + 1}`,
+          scenario: typeof ac === "string" ? ac : ac.scenario ?? "",
+        }))
+    ).map((ac) => (typeof ac === "string" ? { id: "", scenario: ac } : ac));
+
+    return (
       <div
+        key={story._id}
         style={{
-          margin: `-${spacing[6]}`,
-          display: "flex",
-          flexDirection: "column",
-          minHeight: "calc(100vh - 60px)",
-          backgroundColor: colors.canvas,
+          backgroundColor: "#fff",
+          borderRadius: 12,
+          border: "1px solid #e2e8f0",
+          overflow: "hidden",
+          borderLeft: `4px solid ${tc.border}`,
+          marginBottom: 16,
         }}
       >
-        {/* ── STATS BAR ───────────────────────────────────── */}
-        <div
-          style={{
-            height: "56px",
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: `0 ${spacing[6]}`,
-            backgroundColor: colors["surface-card"],
-            borderBottom: `1px solid ${colors["border-default"]}`,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: spacing[6], flexWrap: "wrap" }}>
-            {(reviewWorkspace?.displayName ?? activeWorkspaceLabel) && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "2px",
-                  paddingRight: spacing[4],
-                  borderRight: `1px solid ${colors["border-default"]}`,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: typography.captionSm.size,
-                    fontWeight: 600,
-                    color: colors["text-tertiary"],
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  Workspace
-                </span>
-                <span
-                  style={{
-                    fontSize: typography.bodySm.size,
-                    fontWeight: 700,
-                    color: colors["text-primary"],
-                  }}
-                >
-                  {reviewWorkspace?.displayName ?? activeWorkspaceLabel}
-                </span>
-              </div>
+        <div style={{ padding: "16px 20px" }}>
+          {/* Badge row */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <span style={{ backgroundColor: tc.bg, color: tc.text, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
+              {story.type}
+            </span>
+            <span style={{ backgroundColor: "#f1f5f9", color: "#475569", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
+              DP-{story._id.slice(-4).toUpperCase()}
+            </span>
+            <span style={{ backgroundColor: "#f0f0ff", color: "#6d28d9", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
+              ✨ AI Generated
+            </span>
+            <span style={{ backgroundColor: (priorityColors[story.priority] ?? "#94a3b8") + "20", color: priorityColors[story.priority] ?? "#94a3b8", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
+              {story.priority}
+            </span>
+            {tabSource === "slack" && (
+              <span style={{ backgroundColor: "#f8f0ff", color: "#7c3aed", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #e9d5ff" }}>💬 Slack</span>
             )}
-            <StatPill
-              label={`${queueStats.pending} Pending`}
-              color={colors.warning}
-            />
-            <StatPill
-              label={`${queueStats.approvedToday} Approved Today`}
-              color={colors["success-dark"]}
-            />
-            <StatPill
-              label={`${queueStats.rejected} Rejected`}
-              color={colors.danger}
-            />
+            {tabSource === "document" && (
+              <span style={{ backgroundColor: "#fff7ed", color: "#c2410c", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #fed7aa" }}>📄 Document</span>
+            )}
           </div>
-          <button type="button" onClick={approveAllPending} style={btnGreen}>
-            Approve All
-          </button>
-        </div>
 
-        {/* ── FILTER BAR ────────────────────────────────────── */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: spacing[2],
-            padding: `${spacing[3]} ${spacing[6]}`,
-            backgroundColor: colors.canvas,
-          }}
-        >
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <FilterDropdown label="All Sources" />
-            <FilterDropdown label="All Types" />
-            <FilterDropdown label="All Clients" />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: spacing[2],
-                fontSize: typography.bodySm.size,
-                color: colors["text-secondary"],
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={
-                  pendingStories.length > 0 &&
-                  checkedIds.length === pendingStories.length
-                }
-                onChange={toggleSelectAll}
-              />
-              Select All
-            </label>
-            <button
-              type="button"
-              onClick={approveSelected}
-              disabled={checkedIds.length === 0}
-              style={{
-                ...btnGreen,
-                opacity: checkedIds.length === 0 ? 0.5 : 1,
-                cursor: checkedIds.length === 0 ? "not-allowed" : "pointer",
-              }}
-            >
-              Approve Selected
-            </button>
-          </div>
-        </div>
+          {/* Title */}
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", margin: "0 0 8px" }}>
+            {story.storyTitle ?? story.title}
+          </h3>
 
-        {actionError != null && (
-          <div
-            role="alert"
-            style={{
-              margin: `0 ${spacing[6]}`,
-              padding: spacing[3],
-              backgroundColor: colors["danger-bg"],
-              borderRadius: borderRadius.md,
-              color: colors["danger-dark"],
-              fontSize: typography.bodySm.size,
-            }}
-          >
-            {actionError}
-          </div>
-        )}
-
-        {/* ── STORY CARDS LIST ──────────────────────────────── */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: `0 ${spacing[6]} ${spacing[6]}`,
-            display: "flex",
-            flexDirection: "column",
-            gap: spacing[2],
-          }}
-        >
-          {isLoading &&
-            Array.from({ length: 3 }).map((_, i) => (
-              <StoryCardSkeleton key={`sk-${i}`} />
-            ))}
-          {error != null && !isLoading && (
-            <p style={{ color: colors.danger }}>{error}</p>
+          {/* Description */}
+          {story.description && (
+            <p style={{ fontSize: 13, color: "#475569", margin: "0 0 12px", lineHeight: 1.6 }}>
+              {story.description}
+            </p>
           )}
-          {!isLoading && !error && stories.length === 0 && (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: spacing[8],
-                gap: spacing[3],
-                color: colors["text-secondary"],
-              }}
-            >
-              <div
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: borderRadius.full,
-                  backgroundColor: colors["success-bg"],
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Check size={28} color={colors["success-dark"]} />
-              </div>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: typography.bodyMd.size,
-                  fontWeight: 600,
-                  color: colors["text-primary"],
-                }}
-              >
-                All caught up! No stories pending review
+
+          {/* Original quote */}
+          {story.sourceQuote && (
+            <div style={{ backgroundColor: "#f8fafc", borderLeft: "3px solid #cbd5e1", padding: "8px 12px", borderRadius: "0 6px 6px 0", marginBottom: 12 }}>
+              <p style={{ fontSize: 12, color: "#64748b", fontStyle: "italic", margin: 0 }}>
+                💬 Client said: "{story.sourceQuote}"
               </p>
             </div>
           )}
-          {stories.map((story) => (
-            <StoryCard
-              key={story.id}
-              story={story}
-              checked={checkedIds.includes(story.id)}
-              onToggleCheck={() => toggleCheck(story.id)}
-              onApprove={() => approveStory(story.id)}
-              onReject={() => rejectStory(story.id)}
-              onEdit={() => openEditPanel(story.id)}
-            />
+
+          {/* Acceptance criteria (collapsible) */}
+          {acItems.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                type="button"
+                onClick={() => toggleExpand(story._id)}
+                style={{ background: "none", border: "none", color: "#0088ff", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}
+              >
+                {isExpanded ? "▼" : "▶"} Acceptance Criteria ({acItems.length})
+              </button>
+              {isExpanded && (
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {acItems.map((ac, i) => (
+                    <div key={i} style={{ backgroundColor: "#f8fafc", borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "#374151", lineHeight: 1.6 }}>
+                      <span style={{ fontWeight: 700, color: "#0088ff" }}>{ac.id || `AC ${i + 1}`}:</span>{" "}
+                      {ac.scenario}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Release notes (when expanded) */}
+          {story.releaseNotes && isExpanded && (
+            <div style={{ backgroundColor: "#f0fdf4", borderRadius: 6, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "#166534" }}>
+              <span style={{ fontWeight: 600 }}>📋 Release Notes: </span>{story.releaseNotes}
+            </div>
+          )}
+
+          {/* Footer row */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #f1f5f9" }}>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>
+              {story.clientId?.name && <span style={{ marginRight: 12 }}>👤 {story.clientId.name}</span>}
+              {story.projectId?.name && <span style={{ marginRight: 12 }}>📁 {story.projectId.name}</span>}
+              🕐 {new Date(story.createdAt ?? Date.now()).toLocaleDateString()}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => handleEditClick(story)} style={{ padding: "6px 16px", backgroundColor: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
+              <button type="button" onClick={() => handleReject(story._id)} style={{ padding: "6px 16px", backgroundColor: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
+              <button type="button" onClick={() => handleApprove(story._id)} style={{ padding: "6px 16px", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Approve</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── ADO card ───────────────────────────────────────────────────────────────
+
+  const renderAdoCard = (story: Story) => (
+    <div key={story._id} style={{ backgroundColor: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: "16px 20px", borderLeft: "4px solid #16a34a", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        <span style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>✅ Approved</span>
+        {story.adoId && (
+          <span style={{ backgroundColor: "#eff6ff", color: "#2563eb", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>ADO #{story.adoId}</span>
+        )}
+        <span style={{ backgroundColor: "#f1f5f9", color: "#64748b", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>{story.type}</span>
+        <span style={{ backgroundColor: (priorityColors[story.priority] ?? "#94a3b8") + "20", color: priorityColors[story.priority] ?? "#94a3b8", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
+          {story.priority}
+        </span>
+      </div>
+      <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", margin: "0 0 8px" }}>
+        {story.storyTitle ?? story.title}
+      </h3>
+      {story.description && (
+        <p style={{ fontSize: 13, color: "#475569", margin: "0 0 12px" }}>{story.description}</p>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "#94a3b8" }}>
+          Approved {new Date(story.approvedAt ?? story.updatedAt ?? Date.now()).toLocaleDateString()}
+        </span>
+        {story.adoId && (
+          <a href="#" style={{ color: "#0088ff", fontSize: 13, textDecoration: "none", fontWeight: 500 }}>
+            View in ADO →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Tabs config ────────────────────────────────────────────────────────────
+
+  const tabs = [
+    { key: "slack",    label: "Slack Messages", count: slackStories.length,    icon: "💬" },
+    { key: "document", label: "Documents",       count: documentStories.length, icon: "📄" },
+    { key: "ado",      label: "ADO Stories",     count: adoStories.length,      icon: "✅" },
+  ];
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <AppShell pageTitle="Review Queue">
+      <div style={{ margin: "-24px", display: "flex", flexDirection: "column", height: "calc(100vh - 60px)" }}>
+
+        {/* Header */}
+        <div style={{ backgroundColor: "#fff", borderBottom: "1px solid #e2e8f0", padding: "16px 24px", flexShrink: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#1e293b", margin: 0 }}>Review Queue</h1>
+              <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
+                Review and approve AI-generated stories before pushing to ADO
+              </p>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 24, marginTop: 12 }}>
+            <span style={{ fontSize: 13, color: "#f59e0b", fontWeight: 500 }}>
+              ⏳ {slackStories.length + documentStories.length} Pending
+            </span>
+            <span style={{ fontSize: 13, color: "#16a34a", fontWeight: 500 }}>
+              ✅ {adoStories.length} Approved
+            </span>
+          </div>
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ backgroundColor: "#fff", borderBottom: "1px solid #e2e8f0", display: "flex", padding: "0 24px", flexShrink: 0 }}>
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                padding: "14px 20px",
+                fontSize: 14,
+                fontWeight: activeTab === tab.key ? 600 : 500,
+                cursor: "pointer",
+                border: "none",
+                borderBottom: activeTab === tab.key ? "2px solid #0088ff" : "2px solid transparent",
+                color: activeTab === tab.key ? "#0088ff" : "#64748b",
+                backgroundColor: "transparent",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: -1,
+              }}
+            >
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+              <span style={{
+                backgroundColor: activeTab === tab.key ? "#eff6ff" : "#f1f5f9",
+                color: activeTab === tab.key ? "#0088ff" : "#64748b",
+                borderRadius: 999,
+                padding: "1px 8px",
+                fontSize: 12,
+                fontWeight: 600,
+              }}>
+                {tab.count}
+              </span>
+            </button>
           ))}
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          {isLoading ? (
+            <div style={{ textAlign: "center", padding: 60, color: "#64748b" }}>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>⏳</div>Loading stories…
+            </div>
+          ) : (
+            <>
+              {activeTab === "slack" && (
+                slackStories.length === 0
+                  ? <EmptyState icon="💬" title="No Slack stories pending review" subtitle="Stories appear here when clients send messages in Slack" />
+                  : slackStories.map((s) => renderStoryCard(s, "slack"))
+              )}
+              {activeTab === "document" && (
+                documentStories.length === 0
+                  ? <EmptyState icon="📄" title="No document stories pending review" subtitle="Upload a PRD or UAT document to generate stories automatically" buttonText="Upload Document" buttonAction={() => { window.location.href = "/documents"; }} />
+                  : documentStories.map((s) => renderStoryCard(s, "document"))
+              )}
+              {activeTab === "ado" && (
+                adoStories.length === 0
+                  ? <EmptyState icon="✅" title="No stories pushed to ADO yet" subtitle="Approve stories from Slack or Documents tab to push to ADO" />
+                  : adoStories.map((s) => renderAdoCard(s))
+              )}
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── SLIDE-IN EDIT PANEL ───────────────────────────── */}
-      {isEditPanelOpen && editingStory && editDraft && (
-        <>
-          <div
-            role="presentation"
-            onClick={closeEditPanel}
-            style={{
-              position: "fixed",
-              inset: 0,
-              backgroundColor: "rgba(15, 23, 42, 0.35)",
-              zIndex: 200,
-            }}
-          />
-          <aside
-            style={{
-              position: "fixed",
-              right: 0,
-              top: 0,
-              width: "600px",
-              height: "100vh",
-              backgroundColor: colors["surface-card"],
-              boxShadow: "-8px 0 24px rgba(0,0,0,0.12)",
-              zIndex: 201,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: spacing[5],
-                borderBottom: `1px solid ${colors["border-default"]}`,
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: typography.titleSm.size,
-                  fontWeight: 700,
-                  color: colors["text-primary"],
-                }}
-              >
-                Edit Story {editingStory.ticketId}
-              </h2>
-              <button
-                type="button"
-                onClick={closeEditPanel}
-                aria-label="Close"
-                style={btnIcon}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div
-              style={{
-                flex: 1,
-                overflowY: "auto",
-                padding: spacing[5],
-                display: "flex",
-                flexDirection: "column",
-                gap: spacing[4],
-              }}
-            >
-              <EditField label="Story Title">
-                <input
-                  type="text"
-                  value={editDraft.storyTitle}
-                  onChange={(e) =>
-                    setEditDraft((d) =>
-                      d ? { ...d, storyTitle: e.target.value } : d,
-                    )
-                  }
-                  style={inputStyle}
-                />
-              </EditField>
-              <EditField label="Type">
-                <select
-                  value={editDraft.type}
-                  onChange={(e) =>
-                    setEditDraft((d) =>
-                      d ? { ...d, type: e.target.value as StoryType } : d,
-                    )
-                  }
-                  style={inputStyle}
-                >
-                  <option value="bug">Bug</option>
-                  <option value="story">Story</option>
-                  <option value="task">Task</option>
-                  <option value="feature">Feature</option>
-                </select>
-              </EditField>
-              <EditField label="Priority">
-                <select
-                  value={editDraft.priority}
-                  onChange={(e) =>
-                    setEditDraft((d) =>
-                      d ? { ...d, priority: e.target.value as Priority } : d,
-                    )
-                  }
-                  style={inputStyle}
-                >
-                  <option>Critical</option>
-                  <option>High</option>
-                  <option>Medium</option>
-                  <option>Low</option>
-                </select>
-              </EditField>
-              <EditField label="Description & Value Statement">
-                <textarea
-                  value={editDraft.description}
-                  onChange={(e) =>
-                    setEditDraft((d) =>
-                      d ? { ...d, description: e.target.value } : d,
-                    )
-                  }
-                  rows={4}
-                  placeholder="As a [user] I need [what] So that [value]"
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-              </EditField>
-              <EditField label="Acceptance Criteria">
-                <div style={{ display: "flex", flexDirection: "column", gap: spacing[3] }}>
-                  {editDraft.acceptanceCriteriaFormatted.map((ac, idx) => (
-                    <div key={idx}>
-                      <div style={{ fontSize: typography.captionSm.size, fontWeight: 700, marginBottom: 4, color: colors["text-secondary"] }}>
-                        {ac.id}
-                      </div>
-                      <textarea
-                        value={ac.scenario}
-                        onChange={(e) => {
-                          const updated = [...editDraft.acceptanceCriteriaFormatted];
-                          updated[idx] = { ...updated[idx], scenario: e.target.value };
-                          setEditDraft((d) => d ? { ...d, acceptanceCriteriaFormatted: updated } : d);
-                        }}
-                        rows={3}
-                        placeholder="Given [context] When [action] Then [result]"
-                        style={{ ...inputStyle, resize: "vertical" }}
-                      />
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newAc = {
-                        id: `AC ${editDraft.acceptanceCriteriaFormatted.length + 1}`,
-                        scenario: "",
-                      };
-                      setEditDraft((d) =>
-                        d ? { ...d, acceptanceCriteriaFormatted: [...d.acceptanceCriteriaFormatted, newAc] } : d,
-                      );
-                    }}
-                    style={{ ...btnFilter, fontSize: typography.captionSm.size, alignSelf: "flex-start" }}
-                  >
-                    + Add Acceptance Criteria
-                  </button>
-                </div>
-              </EditField>
-              <EditField label="Release Notes">
-                <textarea
-                  value={editDraft.releaseNotes}
-                  onChange={(e) =>
-                    setEditDraft((d) =>
-                      d ? { ...d, releaseNotes: e.target.value } : d,
-                    )
-                  }
-                  rows={3}
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-              </EditField>
-              <EditField label="Sprint">
-                <input
-                  type="text"
-                  value={editDraft.sprint}
-                  onChange={(e) =>
-                    setEditDraft((d) =>
-                      d ? { ...d, sprint: e.target.value } : d,
-                    )
-                  }
-                  style={inputStyle}
-                />
-              </EditField>
-            </div>
-
-            <div
-              style={{
-                padding: spacing[5],
-                borderTop: `1px solid ${colors["border-default"]}`,
-                display: "flex",
-                alignItems: "center",
-                gap: spacing[4],
-              }}
-            >
-              <button
-                type="button"
-                onClick={saveEdit}
-                disabled={isSaving}
-                style={btnBlue}
-              >
-                {isSaving ? "Saving…" : "Save Changes"}
-              </button>
-              <button
-                type="button"
-                onClick={saveAndApprove}
-                disabled={isSaving}
-                style={btnGreen}
-              >
-                {isSaving ? "Saving…" : "Save and Approve"}
-              </button>
-              <button
-                type="button"
-                onClick={closeEditPanel}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  color: colors["text-secondary"],
-                  fontSize: typography.bodySm.size,
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </aside>
-        </>
+      {/* Overlay */}
+      {isEditPanelOpen && (
+        <div
+          role="presentation"
+          onClick={() => setIsEditPanelOpen(false)}
+          style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.3)", zIndex: 99 }}
+        />
       )}
 
-      {toast != null && (
-        <div
-          role="status"
-          style={{
-            position: "fixed",
-            bottom: spacing[6],
-            right: spacing[6],
-            zIndex: 300,
-            padding: `${spacing[3]} ${spacing[5]}`,
-            borderRadius: borderRadius.md,
-            backgroundColor:
-              toast.variant === "success"
-                ? colors["success-dark"]
-                : colors.danger,
-            color: colors["text-on-dark"],
-            fontSize: typography.bodySm.size,
-            fontWeight: 600,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-          }}
-        >
-          {toast.message}
+      {/* Edit panel */}
+      {isEditPanelOpen && (
+        <div style={{ position: "fixed", right: 0, top: 0, width: 580, height: "100vh", backgroundColor: "#fff", boxShadow: "-4px 0 20px rgba(0,0,0,0.1)", zIndex: 100, display: "flex", flexDirection: "column" }}>
+          {/* Panel header */}
+          <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "#1e293b" }}>Edit Story</h2>
+            <button type="button" onClick={() => setIsEditPanelOpen(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#64748b" }}>×</button>
+          </div>
+
+          {/* Panel body */}
+          <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+            {/* Story Title */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Story Title</label>
+              <input value={editForm.storyTitle} onChange={(e) => setEditForm({ ...editForm, storyTitle: e.target.value })}
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }} />
+            </div>
+
+            {/* Type + Priority */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Type</label>
+                <select value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}>
+                  <option>Bug</option><option>Story</option><option>Feature</option><option>Task</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Priority</label>
+                <select value={editForm.priority} onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })}
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}>
+                  <option>Critical</option><option>High</option><option>Medium</option><option>Low</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Description */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Description & Value Statement</label>
+              <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                placeholder="As a [user] I need [what] So that [value]"
+                style={{ width: "100%", height: 100, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
+            </div>
+
+            {/* Acceptance Criteria */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Acceptance Criteria</label>
+              {editForm.acceptanceCriteria.map((ac, idx) => (
+                <div key={idx} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#0088ff", marginBottom: 4 }}>{ac.id || `AC ${idx + 1}`}</div>
+                  <textarea
+                    value={ac.scenario}
+                    onChange={(e) => {
+                      const updated = [...editForm.acceptanceCriteria];
+                      updated[idx] = { ...updated[idx], scenario: e.target.value };
+                      setEditForm({ ...editForm, acceptanceCriteria: updated });
+                    }}
+                    placeholder="Given [context] When [action] Then [result]"
+                    style={{ width: "100%", height: 72, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setEditForm({ ...editForm, acceptanceCriteria: [...editForm.acceptanceCriteria, { id: `AC ${editForm.acceptanceCriteria.length + 1}`, scenario: "" }] })}
+                style={{ border: "1px dashed #0088ff", color: "#0088ff", background: "transparent", borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 13, width: "100%" }}
+              >
+                + Add Acceptance Criteria
+              </button>
+            </div>
+
+            {/* Release Notes */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Release Notes</label>
+              <textarea value={editForm.releaseNotes} onChange={(e) => setEditForm({ ...editForm, releaseNotes: e.target.value })}
+                style={{ width: "100%", height: 80, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
+            </div>
+          </div>
+
+          {/* Panel footer */}
+          <div style={{ padding: "16px 24px", borderTop: "1px solid #e2e8f0", display: "flex", gap: 12, justifyContent: "flex-end" }}>
+            <button type="button" onClick={() => setIsEditPanelOpen(false)}
+              style={{ padding: "10px 24px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", cursor: "pointer", fontSize: 14 }}>
+              Cancel
+            </button>
+            <button type="button" onClick={handleSaveEdit}
+              style={{ padding: "10px 24px", backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
+              Save Changes
+            </button>
+          </div>
         </div>
       )}
     </AppShell>
   );
-};
-
-// ── Sub-components ───────────────────────────────────────────
-
-function StatPill({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{ fontSize: "14px", fontWeight: 600, color }}>{label}</span>
-  );
-}
-
-function FilterDropdown({ label }: { label: string }) {
-  return (
-    <button type="button" style={btnFilter}>
-      {label} ▼
-    </button>
-  );
-}
-
-function StoryCardSkeleton() {
-  return (
-    <div
-      aria-hidden
-      style={{
-        backgroundColor: colors["surface-card"],
-        border: `1px solid ${colors["border-default"]}`,
-        borderRadius: borderRadius.md,
-        padding: spacing[4],
-        borderLeft: `4px solid ${colors["border-default"]}`,
-      }}
-    >
-      <div
-        style={{
-          height: 12,
-          width: "40%",
-          backgroundColor: colors["surface-subtle"],
-          borderRadius: borderRadius.sm,
-          marginBottom: spacing[3],
-        }}
-      />
-      <div
-        style={{
-          height: 16,
-          width: "75%",
-          backgroundColor: colors["surface-subtle"],
-          borderRadius: borderRadius.sm,
-          marginBottom: spacing[2],
-        }}
-      />
-      <div
-        style={{
-          height: 12,
-          width: "100%",
-          backgroundColor: colors["surface-subtle"],
-          borderRadius: borderRadius.sm,
-        }}
-      />
-    </div>
-  );
-}
-
-function StoryCard({
-  story,
-  checked,
-  onToggleCheck,
-  onApprove,
-  onReject,
-  onEdit,
-}: {
-  story: ReviewStory;
-  checked: boolean;
-  onToggleCheck: () => void;
-  onReject: () => void;
-  onApprove: () => void;
-  onEdit: () => void;
-}) {
-  const typeLabel = typeLabelMap[story.type];
-  const sourceLabel = sourceLabelMap[story.source];
-
-  return (
-    <article
-      style={{
-        backgroundColor: colors["surface-card"],
-        border: `1px solid ${colors["border-default"]}`,
-        borderLeft: `4px solid ${typeBorderColor[story.type]}`,
-        borderRadius: borderRadius.md,
-        padding: spacing[4],
-        opacity: story.status === "rejected" ? 0.65 : 1,
-      }}
-    >
-      {/* Top row: badges + meta + checkbox */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: spacing[2],
-          marginBottom: spacing[2],
-        }}
-      >
-        <StatusBadge variant={typeBadgeVariant[story.type]} label={typeLabel} />
-        <TicketId id={story.ticketId} />
-        {story.isAIGenerated !== false && (
-          <span style={badgeAi}>
-            <Sparkles size={10} style={{ verticalAlign: "middle", marginRight: 2 }} />
-            AI
-          </span>
-        )}
-        <span style={badgeSource}>{sourceLabel}</span>
-        <span style={badgeClient}>{story.client}</span>
-        <span style={{ marginLeft: "auto", fontSize: typography.monoSm.size, color: colors["text-tertiary"] }}>
-          {story.timeAgo}
-        </span>
-        {story.status === "pending" && (
-          <input type="checkbox" checked={checked} onChange={onToggleCheck} />
-        )}
-        {story.status === "approved" && (
-          <StatusBadge variant="healthy" label="Approved" />
-        )}
-        {story.status === "rejected" && (
-          <StatusBadge variant="critical" label="Rejected" />
-        )}
-        {story.status === "edited" && (
-          <StatusBadge variant="info" label="Edited" />
-        )}
-      </div>
-
-      {/* Title */}
-      <h3
-        style={{
-          margin: `0 0 ${spacing[2]} 0`,
-          fontSize: typography.bodySm.size,
-          fontWeight: 700,
-          color: colors["text-primary"],
-          lineHeight: 1.4,
-        }}
-      >
-        {story.title}
-      </h3>
-
-      {story.description && story.description !== story.sourceQuote && (
-        <p
-          style={{
-            margin: `0 0 ${spacing[2]} 0`,
-            fontSize: typography.captionSm.size,
-            color: colors["text-secondary"],
-            lineHeight: 1.45,
-          }}
-        >
-          {story.description}
-        </p>
-      )}
-
-      {/* Acceptance criteria */}
-      <ul
-        style={{
-          margin: `0 0 ${spacing[3]} 0`,
-          padding: 0,
-          listStyle: "none",
-          display: "flex",
-          flexDirection: "column",
-          gap: spacing[1],
-        }}
-      >
-        {story.acceptanceCriteria.map((ac) => (
-          <li
-            key={ac}
-            style={{
-              display: "flex",
-              gap: spacing[2],
-              fontSize: typography.captionSm.size,
-              color: colors["text-secondary"],
-            }}
-          >
-            <Check size={14} color={colors["success-dark"]} style={{ flexShrink: 0 }} />
-            {ac}
-          </li>
-        ))}
-      </ul>
-
-      {story.sourceQuote ? (
-        <div style={quoteBox}>
-          <div
-            style={{
-              fontSize: typography.captionSm.size,
-              fontWeight: 600,
-              color: colors["text-tertiary"],
-              marginBottom: "2px",
-            }}
-          >
-            Original:
-          </div>
-          <div
-            style={{
-              fontSize: typography.captionSm.size,
-              fontStyle: "italic",
-              color: colors["text-secondary"],
-            }}
-          >
-            {story.sourceQuote}
-          </div>
-        </div>
-      ) : null}
-
-      {/* Meta row */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: spacing[2],
-          alignItems: "center",
-          marginTop: spacing[3],
-          marginBottom: spacing[3],
-        }}
-      >
-        <StatusBadge
-          variant={priorityVariant[story.priority]}
-          label={story.priority}
-        />
-        <span style={badgeSprint}>{story.sprint}</span>
-        {story.regressionWarning && (
-          <span style={badgeWarning}>{story.regressionWarning}</span>
-        )}
-        {story.goLiveWarning && (
-          <span style={badgeWarning}>{story.goLiveWarning}</span>
-        )}
-      </div>
-
-      {/* Actions */}
-      {story.status === "pending" && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: spacing[2] }}>
-          <button type="button" onClick={onApprove} style={btnGreenSm}>
-            Approve
-          </button>
-          <button type="button" onClick={onEdit} style={btnBlueSm}>
-            Edit
-          </button>
-          <button type="button" onClick={onReject} style={btnRedSm}>
-            Reject
-          </button>
-          <button type="button" style={btnGraySm}>
-            Preview
-          </button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function EditField({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div>
-      <label
-        style={{
-          display: "block",
-          fontSize: typography.labelMd.size,
-          fontWeight: typography.labelMd.weight,
-          color: colors["text-primary"],
-          marginBottom: spacing[2],
-        }}
-      >
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-// ── Shared styles ────────────────────────────────────────────
-
-const btnGreen: React.CSSProperties = {
-  padding: `${spacing[2]} ${spacing[4]}`,
-  backgroundColor: colors["success-dark"],
-  color: colors["text-on-dark"],
-  border: "none",
-  borderRadius: borderRadius.md,
-  fontSize: typography.bodySm.size,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const btnBlue: React.CSSProperties = {
-  ...btnGreen,
-  backgroundColor: colors.info,
-};
-
-const btnGreenSm: React.CSSProperties = {
-  ...btnGreen,
-  padding: `${spacing[1]} ${spacing[3]}`,
-  fontSize: typography.captionSm.size,
-};
-
-const btnBlueSm: React.CSSProperties = {
-  ...btnGreenSm,
-  backgroundColor: colors.info,
-};
-
-const btnRedSm: React.CSSProperties = {
-  ...btnGreenSm,
-  backgroundColor: colors.danger,
-};
-
-const btnGraySm: React.CSSProperties = {
-  ...btnGreenSm,
-  backgroundColor: colors["text-tertiary"],
-};
-
-const btnFilter: React.CSSProperties = {
-  padding: `${spacing[2]} ${spacing[3]}`,
-  backgroundColor: colors["surface-card"],
-  border: `1px solid ${colors["border-default"]}`,
-  borderRadius: borderRadius.md,
-  fontSize: typography.bodySm.size,
-  color: colors["text-primary"],
-  cursor: "pointer",
-};
-
-const btnIcon: React.CSSProperties = {
-  border: "none",
-  background: "transparent",
-  cursor: "pointer",
-  padding: spacing[1],
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: `${spacing[2]} ${spacing[3]}`,
-  borderRadius: borderRadius.md,
-  border: `1px solid ${colors["border-default"]}`,
-  fontSize: typography.bodySm.size,
-  boxSizing: "border-box",
-};
-
-const badgeAi: React.CSSProperties = {
-  fontSize: typography.captionSm.size,
-  fontWeight: 600,
-  padding: "2px 6px",
-  borderRadius: borderRadius.full,
-  backgroundColor: "#EDE9FE",
-  color: "#7c3aed",
-};
-
-const badgeSource: React.CSSProperties = {
-  fontSize: typography.captionSm.size,
-  fontWeight: 500,
-  padding: "2px 6px",
-  borderRadius: borderRadius.sm,
-  backgroundColor: colors.canvas,
-  color: colors["text-secondary"],
-};
-
-const badgeClient: React.CSSProperties = {
-  fontSize: typography.captionSm.size,
-  fontWeight: 600,
-  padding: "2px 8px",
-  borderRadius: borderRadius.full,
-  backgroundColor: colors["surface-subtle"],
-  color: colors["text-secondary"],
-};
-
-const badgeSprint: React.CSSProperties = {
-  fontSize: typography.monoSm.size,
-  padding: "2px 8px",
-  borderRadius: borderRadius.sm,
-  backgroundColor: colors.canvas,
-  color: colors["text-secondary"],
-};
-
-const badgeWarning: React.CSSProperties = {
-  fontSize: typography.monoSm.size,
-  padding: "2px 8px",
-  borderRadius: borderRadius.sm,
-  backgroundColor: colors["warning-bg"],
-  color: colors["warning-dark"],
-};
-
-const quoteBox: React.CSSProperties = {
-  backgroundColor: colors["surface-subtle"],
-  borderRadius: borderRadius.sm,
-  padding: "6px 8px",
 };
 
 export default ReviewQueuePage;

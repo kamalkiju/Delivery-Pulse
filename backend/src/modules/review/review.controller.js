@@ -8,11 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Story from "../../models/Story.model.js";
-import Client from "../../models/Client.model.js";
 import SlackWorkspace from "../../models/SlackWorkspace.model.js";
-import * as storyService from "../../services/story/story.service.js";
-import { resolveWorkspaceContext } from "../../utils/workspaceContext.js";
-import { buildWorkspaceStoryFilter } from "../../utils/workspaceStoryFilter.js";
 
 // ── Helpers: shape MongoDB documents for the React UI ───────────────────────
 
@@ -101,10 +97,10 @@ export async function getReviewQueue(req, res) {
       });
     }
 
-    const wsContext = await resolveWorkspaceContext(req, organisationId);
+    const { source, projectId } = req.query;
 
-    // Collect every organisationId linked to an active workspace so stories
-    // saved under a previous org (reconnected workspace) are still visible.
+    // Sweep all active workspace org IDs so stories saved under a previously
+    // linked org are still visible (account-recreate / reconnect scenario).
     const activeWorkspaces = await SlackWorkspace.find({ isActive: true })
       .select("organisationId")
       .lean();
@@ -112,25 +108,26 @@ export async function getReviewQueue(req, res) {
     const orgIds = [
       ...new Set([
         organisationId.toString(),
-        ...activeWorkspaces
-          .map((w) => w.organisationId?.toString())
-          .filter(Boolean),
+        ...activeWorkspaces.map((w) => w.organisationId?.toString()).filter(Boolean),
       ]),
     ];
 
-    console.log("[reviewQueue] user org:", organisationId, "| searching orgIds:", orgIds);
+    console.log("[reviewQueue] user org:", organisationId, "| orgIds:", orgIds, "| source:", source ?? "all");
 
     const storyFilter = {
       status: "pending-review",
       organisationId: { $in: orgIds },
     };
+    if (source) storyFilter.source = source;
+    if (projectId) storyFilter.projectId = projectId;
 
     const stories = await Story.find(storyFilter)
-      .populate("clientId", "name company organisationId")
+      .populate("clientId", "name company")
+      .populate("projectId", "name color")
       .sort({ createdAt: -1 })
       .limit(100);
 
-    console.log("[reviewQueue] found:", stories.length, "pending stories");
+    console.log("[reviewQueue] found:", stories.length, "stories");
 
     const stats = {
       pending: stories.length,
@@ -143,13 +140,7 @@ export async function getReviewQueue(req, res) {
       success: true,
       stories: stories.map(toReviewStoryDto),
       stats,
-      workspace: wsContext.workspace
-        ? {
-            id: wsContext.workspace._id.toString(),
-            teamName: wsContext.workspace.teamName,
-            displayName: `${wsContext.workspace.teamName} Workspace`,
-          }
-        : null,
+      workspace: null,
     });
   } catch (error) {
     console.error("[review] getReviewQueue:", error);

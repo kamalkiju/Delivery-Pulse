@@ -106,6 +106,11 @@ const storySchema = new mongoose.Schema({
     type: String,
   },
 
+  projectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Project",
+  },
+
   releaseNotes: {
     type: String,
     default: "",

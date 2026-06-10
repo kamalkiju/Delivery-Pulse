@@ -15,7 +15,6 @@ import {
 import { logoutUser } from "../../api/auth.api";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import SidebarWorkspaceSwitcher from "./SidebarWorkspaceSwitcher";
 import { isSidebarNavActive } from "../../utils/navActive";
 import {
   borderRadius,
@@ -137,8 +136,6 @@ const Sidebar = () => {
           />
         </div>
       </div>
-
-      <SidebarWorkspaceSwitcher />
 
       <SidebarDivider />
 

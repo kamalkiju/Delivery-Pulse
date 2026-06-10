@@ -14,7 +14,11 @@ const documentSchema = new mongoose.Schema({
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Client",
-    required: true,
+  },
+
+  projectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Project",
   },
 
   // Original filename as uploaded by the user
@@ -29,10 +33,9 @@ const documentSchema = new mongoose.Schema({
     required: true,
   },
 
-  // Path on disk or cloud storage key
   filePath: {
     type: String,
-    required: true,
+    default: "",
   },
 
   // Size in bytes — for upload limits UI

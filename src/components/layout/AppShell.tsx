@@ -2,6 +2,7 @@ import React from "react";
 import Sidebar from "./Sidebar";
 import TopNav from "./TopNav";
 import WorkspaceTopBarExtras from "./WorkspaceTopBarExtras";
+import ProjectSelector from "./ProjectSelector";
 import { useActiveWorkspace } from "../../hooks/useActiveWorkspace";
 import { colors } from "../../styles/tokens";
 
@@ -42,9 +43,12 @@ const AppShell = ({
         <TopNav
           title={pageTitle}
           centerSlot={
-            showWorkspaceContext ? (
-              <WorkspaceTopBarExtras displayName={displayName} />
-            ) : undefined
+            <>
+              <ProjectSelector />
+              {showWorkspaceContext && (
+                <WorkspaceTopBarExtras displayName={displayName} />
+              )}
+            </>
           }
         />
         <main
