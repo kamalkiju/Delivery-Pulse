@@ -111,22 +111,33 @@ const ReviewQueuePage = () => {
 
   const fetchAllStories = async () => {
     setIsLoading(true);
-    try {
-      const projectId = localStorage.getItem("activeProjectId") ?? "";
-      const pp = projectId ? `&projectId=${projectId}` : "";
-      const [slackRes, docRes, adoRes] = await Promise.all([
-        api.get(`/review?source=slack${pp}`),
-        api.get(`/review?source=document${pp}`),
-        api.get(`/stories?status=approved${pp}`),
-      ]);
-      setSlackStories(slackRes.data.stories ?? []);
-      setDocumentStories(docRes.data.stories ?? []);
-      setAdoStories(adoRes.data.stories ?? []);
-    } catch (err) {
-      console.error("[ReviewQueue] fetch error:", err);
-    } finally {
-      setIsLoading(false);
+    const projectId = localStorage.getItem("activeProjectId") ?? "";
+    const pp = projectId ? `&projectId=${projectId}` : "";
+
+    // Use allSettled so one failing call never wipes the other tabs
+    const [slackRes, docRes, adoRes] = await Promise.allSettled([
+      api.get(`/review?source=slack${pp}`),
+      api.get(`/review?source=document${pp}`),
+      api.get(`/stories?status=approved${pp}`),
+    ]);
+
+    if (slackRes.status === "fulfilled") {
+      setSlackStories(slackRes.value.data.stories ?? []);
+    } else {
+      console.error("[ReviewQueue] slack fetch failed:", slackRes.reason?.message);
     }
+    if (docRes.status === "fulfilled") {
+      setDocumentStories(docRes.value.data.stories ?? []);
+    } else {
+      console.error("[ReviewQueue] doc fetch failed:", docRes.reason?.message);
+    }
+    if (adoRes.status === "fulfilled") {
+      setAdoStories(adoRes.value.data.stories ?? []);
+    } else {
+      console.error("[ReviewQueue] ado fetch failed:", adoRes.reason?.message);
+    }
+
+    setIsLoading(false);
   };
 
   useEffect(() => {
