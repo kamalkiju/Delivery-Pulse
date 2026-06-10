@@ -53,13 +53,16 @@ export function toReviewStoryDto(doc) {
   return {
     id,
     ticketId: `DP-${id.slice(-4).toUpperCase()}`,
-    title: doc.title,
+    storyTitle: doc.storyTitle ?? doc.title,
+    title: doc.storyTitle ?? doc.title,
     description: doc.description ?? "",
     type: mapTypeToUi(doc.type),
     priority: doc.priority ?? "Medium",
     source: mapSourceToUi(doc.source),
     sourceQuote: doc.sourceQuote ?? "",
     acceptanceCriteria: doc.acceptanceCriteria ?? [],
+    acceptanceCriteriaFormatted: doc.acceptanceCriteriaFormatted ?? [],
+    releaseNotes: doc.releaseNotes ?? "",
     client: clientName,
     clientId:
       client && typeof client === "object"

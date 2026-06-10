@@ -206,7 +206,11 @@ export async function getReviewQueueStats(organisationId, teamId = null) {
 export async function updateStory(storyId, updates = {}) {
   const patch = {};
 
-  if (updates.title != null) patch.title = updates.title;
+  if (updates.storyTitle != null) {
+    patch.storyTitle = updates.storyTitle;
+    patch.title = updates.storyTitle;
+  }
+  if (updates.title != null && updates.storyTitle == null) patch.title = updates.title;
   if (updates.description != null) patch.description = updates.description;
   if (updates.type != null) {
     const typeMap = {
@@ -221,6 +225,9 @@ export async function updateStory(storyId, updates = {}) {
   if (updates.priority != null) patch.priority = updates.priority;
   if (updates.acceptanceCriteria != null) {
     patch.acceptanceCriteria = updates.acceptanceCriteria;
+  }
+  if (updates.acceptanceCriteriaFormatted != null) {
+    patch.acceptanceCriteriaFormatted = updates.acceptanceCriteriaFormatted;
   }
   if (updates.releaseNotes != null) patch.releaseNotes = updates.releaseNotes;
   if (updates.sprint != null) patch.sprint = updates.sprint;

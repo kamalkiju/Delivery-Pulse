@@ -131,11 +131,12 @@ const ReviewQueuePage = () => {
   const { displayName: activeWorkspaceLabel } = useActiveWorkspace();
 
   const [editDraft, setEditDraft] = useState<{
-    title: string;
+    storyTitle: string;
     description: string;
     type: StoryType;
     priority: Priority;
-    acceptanceCriteria: string[];
+    acceptanceCriteriaFormatted: { id: string; scenario: string }[];
+    releaseNotes: string;
     sprint: string;
   } | null>(null);
 
@@ -182,12 +183,21 @@ const ReviewQueuePage = () => {
     const story = stories.find((s) => s.id === storyId);
     if (!story) return;
     setSelectedStoryId(storyId);
+    const acFormatted: { id: string; scenario: string }[] =
+      story.acceptanceCriteriaFormatted && story.acceptanceCriteriaFormatted.length > 0
+        ? story.acceptanceCriteriaFormatted.map((ac) => ({
+            id: ac.id ?? "",
+            scenario: ac.scenario ?? [ac.given, ac.when, ac.then].filter(Boolean).join(" ") ?? "",
+          }))
+        : story.acceptanceCriteria.map((ac, i) => ({ id: `AC ${i + 1}`, scenario: ac }));
+
     setEditDraft({
-      title: story.title,
+      storyTitle: story.storyTitle ?? story.title,
       description: story.description ?? story.sourceQuote ?? "",
       type: story.type,
       priority: story.priority,
-      acceptanceCriteria: [...story.acceptanceCriteria],
+      acceptanceCriteriaFormatted: acFormatted,
+      releaseNotes: story.releaseNotes ?? "",
       sprint: story.sprint ?? "Backlog",
     });
     setIsEditPanelOpen(true);
@@ -329,11 +339,14 @@ const ReviewQueuePage = () => {
     setActionError(null);
     try {
       const updated = await editStory(selectedStoryId, {
-        title: editDraft.title,
+        storyTitle: editDraft.storyTitle,
+        title: editDraft.storyTitle,
         description: editDraft.description,
         type: editDraft.type,
         priority: editDraft.priority,
-        acceptanceCriteria: editDraft.acceptanceCriteria,
+        acceptanceCriteria: editDraft.acceptanceCriteriaFormatted.map((ac) => ac.scenario),
+        acceptanceCriteriaFormatted: editDraft.acceptanceCriteriaFormatted,
+        releaseNotes: editDraft.releaseNotes,
         sprint: editDraft.sprint,
       });
       setStories((prev) =>
@@ -360,11 +373,14 @@ const ReviewQueuePage = () => {
     setActionError(null);
     try {
       await editStory(selectedStoryId, {
-        title: editDraft.title,
+        storyTitle: editDraft.storyTitle,
+        title: editDraft.storyTitle,
         description: editDraft.description,
         type: editDraft.type,
         priority: editDraft.priority,
-        acceptanceCriteria: editDraft.acceptanceCriteria,
+        acceptanceCriteria: editDraft.acceptanceCriteriaFormatted.map((ac) => ac.scenario),
+        acceptanceCriteriaFormatted: editDraft.acceptanceCriteriaFormatted,
+        releaseNotes: editDraft.releaseNotes,
         sprint: editDraft.sprint,
       });
       await approveStoryApi(selectedStoryId);
@@ -620,7 +636,7 @@ const ReviewQueuePage = () => {
               position: "fixed",
               right: 0,
               top: 0,
-              width: "460px",
+              width: "600px",
               height: "100vh",
               backgroundColor: colors["surface-card"],
               boxShadow: "-8px 0 24px rgba(0,0,0,0.12)",
@@ -668,13 +684,13 @@ const ReviewQueuePage = () => {
                 gap: spacing[4],
               }}
             >
-              <EditField label="Title">
+              <EditField label="Story Title">
                 <input
                   type="text"
-                  value={editDraft.title}
+                  value={editDraft.storyTitle}
                   onChange={(e) =>
                     setEditDraft((d) =>
-                      d ? { ...d, title: e.target.value } : d,
+                      d ? { ...d, storyTitle: e.target.value } : d,
                     )
                   }
                   style={inputStyle}
@@ -685,9 +701,7 @@ const ReviewQueuePage = () => {
                   value={editDraft.type}
                   onChange={(e) =>
                     setEditDraft((d) =>
-                      d
-                        ? { ...d, type: e.target.value as StoryType }
-                        : d,
+                      d ? { ...d, type: e.target.value as StoryType } : d,
                     )
                   }
                   style={inputStyle}
@@ -703,9 +717,7 @@ const ReviewQueuePage = () => {
                   value={editDraft.priority}
                   onChange={(e) =>
                     setEditDraft((d) =>
-                      d
-                        ? { ...d, priority: e.target.value as Priority }
-                        : d,
+                      d ? { ...d, priority: e.target.value as Priority } : d,
                     )
                   }
                   style={inputStyle}
@@ -716,7 +728,7 @@ const ReviewQueuePage = () => {
                   <option>Low</option>
                 </select>
               </EditField>
-              <EditField label="Description">
+              <EditField label="Description & Value Statement">
                 <textarea
                   value={editDraft.description}
                   onChange={(e) =>
@@ -724,24 +736,59 @@ const ReviewQueuePage = () => {
                       d ? { ...d, description: e.target.value } : d,
                     )
                   }
-                  rows={3}
+                  rows={4}
+                  placeholder="As a [user] I need [what] So that [value]"
                   style={{ ...inputStyle, resize: "vertical" }}
                 />
               </EditField>
-              <EditField label="Acceptance criteria">
-                <ul style={{ margin: 0, paddingLeft: spacing[4] }}>
-                  {editDraft.acceptanceCriteria.map((ac, idx) => (
-                    <li
-                      key={`${idx}-${ac}`}
-                      style={{
-                        fontSize: typography.bodySm.size,
-                        marginBottom: spacing[2],
-                      }}
-                    >
-                      {ac}
-                    </li>
+              <EditField label="Acceptance Criteria">
+                <div style={{ display: "flex", flexDirection: "column", gap: spacing[3] }}>
+                  {editDraft.acceptanceCriteriaFormatted.map((ac, idx) => (
+                    <div key={idx}>
+                      <div style={{ fontSize: typography.captionSm.size, fontWeight: 700, marginBottom: 4, color: colors["text-secondary"] }}>
+                        {ac.id}
+                      </div>
+                      <textarea
+                        value={ac.scenario}
+                        onChange={(e) => {
+                          const updated = [...editDraft.acceptanceCriteriaFormatted];
+                          updated[idx] = { ...updated[idx], scenario: e.target.value };
+                          setEditDraft((d) => d ? { ...d, acceptanceCriteriaFormatted: updated } : d);
+                        }}
+                        rows={3}
+                        placeholder="Given [context] When [action] Then [result]"
+                        style={{ ...inputStyle, resize: "vertical" }}
+                      />
+                    </div>
                   ))}
-                </ul>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newAc = {
+                        id: `AC ${editDraft.acceptanceCriteriaFormatted.length + 1}`,
+                        scenario: "",
+                      };
+                      setEditDraft((d) =>
+                        d ? { ...d, acceptanceCriteriaFormatted: [...d.acceptanceCriteriaFormatted, newAc] } : d,
+                      );
+                    }}
+                    style={{ ...btnFilter, fontSize: typography.captionSm.size, alignSelf: "flex-start" }}
+                  >
+                    + Add Acceptance Criteria
+                  </button>
+                </div>
+              </EditField>
+              <EditField label="Release Notes">
+                <textarea
+                  value={editDraft.releaseNotes}
+                  onChange={(e) =>
+                    setEditDraft((d) =>
+                      d ? { ...d, releaseNotes: e.target.value } : d,
+                    )
+                  }
+                  rows={3}
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
               </EditField>
               <EditField label="Sprint">
                 <input
@@ -754,13 +801,6 @@ const ReviewQueuePage = () => {
                   }
                   style={inputStyle}
                 />
-              </EditField>
-              <EditField label="Assignee">
-                <select defaultValue="unassigned" style={inputStyle}>
-                  <option value="unassigned">Unassigned</option>
-                  <option>Arun Kumar</option>
-                  <option>Ravi Menon</option>
-                </select>
               </EditField>
             </div>
 

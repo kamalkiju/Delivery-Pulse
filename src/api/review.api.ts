@@ -1,9 +1,18 @@
 // review.api.ts — ReviewQueuePage BA approval workflow
 import api from "./axios";
 
+export interface AcFormatted {
+  id: string;
+  scenario?: string;
+  given?: string;
+  when?: string;
+  then?: string;
+}
+
 export interface ReviewStory {
   id: string;
   ticketId: string;
+  storyTitle?: string;
   title: string;
   description?: string;
   type: string;
@@ -11,6 +20,8 @@ export interface ReviewStory {
   source: string;
   sourceQuote?: string;
   acceptanceCriteria: string[];
+  acceptanceCriteriaFormatted?: AcFormatted[];
+  releaseNotes?: string;
   client: string;
   clientId?: string;
   sprint?: string;
@@ -80,11 +91,14 @@ export async function rejectStory(id: string): Promise<void> {
 export async function editStory(
   id: string,
   payload: {
+    storyTitle?: string;
     title?: string;
     description?: string;
     type?: string;
     priority?: string;
     acceptanceCriteria?: string[];
+    acceptanceCriteriaFormatted?: AcFormatted[];
+    releaseNotes?: string;
     sprint?: string;
     assignee?: string;
   },
