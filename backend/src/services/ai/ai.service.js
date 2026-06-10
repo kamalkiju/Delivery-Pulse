@@ -6,16 +6,30 @@ const claude = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
 function buildFallbackResult(messageText) {
   const safeText = messageText ?? "";
   return {
-    storyTitle: safeText.substring(0, 80) || "Client message",
+    storyTitle: `DeliveryPulse > General > ${safeText.substring(0, 50)}`,
     type: "Story",
-    title: safeText.substring(0, 80) || "Client message",
-    description: safeText,
+    title: `DeliveryPulse > General > ${safeText.substring(0, 50)}`,
     priority: "Medium",
-    acceptanceCriteria: [],
-    acceptanceCriteriaFormatted: [],
-    releaseNotes: "",
+    description: `As a user I need ${safeText} So that the system works correctly`,
+    acceptanceCriteria: [
+      {
+        id: "AC 1",
+        scenario:
+          "Given the user performs the action When the system processes it Then the expected result is shown",
+      },
+    ],
+    acceptanceCriteriaFormatted: [
+      {
+        id: "AC 1",
+        given: "Given the user performs the action",
+        when: "When the system processes it",
+        then: "Then the expected result is shown",
+      },
+    ],
+    releaseNotes: `We addressed the client requirement: ${safeText}`,
+    releaseNotesText: `We addressed the client requirement: ${safeText}`,
     isRegression: false,
-    suggestedSprint: "Backlog",
+    suggestedSprint: "Current",
   };
 }
 
@@ -32,60 +46,62 @@ export async function analyzeMessage({
     return buildFallbackResult(messageText);
   }
 
-  const prompt = `You are an expert Business Analyst for an IT services company.
-A client named ${clientName} sent this message via Slack.
+  const prompt = `You are a senior Business Analyst working for an IT services company.
+A client has sent a message via Slack that needs to be converted
+into a properly formatted ADO user story.
 
-Analyze the message and return ONLY valid JSON with this structure:
+Your job is to analyze the message and create a professional story.
+
+Return ONLY a valid JSON object. No markdown. No explanation. Just JSON.
 
 {
-  "storyTitle": "HUB>1>INC[number]>[Short feature name]",
-  "type": "Bug" or "Story" or "Feature" or "Task",
-  "priority": "Critical" or "High" or "Medium" or "Low",
-  "description": "As a [user type] I need [what they need] So that [business value]",
+  "storyTitle": "Create a meaningful title like: DeliveryPulse > [Module] > [Feature Name]",
+  "type": "Bug or Story or Feature or Task",
+  "priority": "Critical or High or Medium or Low",
+  "description": "As a [specific user type] I need [specific capability] So that [specific business value and outcome]",
   "acceptanceCriteria": [
     {
       "id": "AC 1",
-      "given": "Given [precondition]",
-      "when": "When [action]",
-      "then": "Then [expected result]"
+      "scenario": "Given [the initial context or state] When [the action is performed] Then [the expected outcome]"
     },
     {
       "id": "AC 2",
-      "given": "Given [precondition]",
-      "when": "When [action]",
-      "then": "Then [expected result]"
+      "scenario": "Given [the initial context or state] When [the action is performed] Then [the expected outcome]"
     },
     {
       "id": "AC 3",
-      "given": "Given [precondition]",
-      "when": "When [action]",
-      "then": "Then [expected result]"
+      "scenario": "Given [the initial context or state] When [the action is performed] Then [the expected outcome]"
     }
   ],
-  "releaseNotes": "We introduced [feature name] to [business reason]. This was developed to meet [requirement]. [Impact statement].",
-  "sprint": "Current" or "Next" or "Backlog"
+  "releaseNotes": "We introduced [feature/fix name] to [solve what problem]. This was developed to meet [requirement]. [Business impact statement].",
+  "sprint": "Current or Next or Backlog"
 }
 
-Classification rules:
-- Bug: error, not working, broken, 500, crash, failed, issue
-- Feature: new feature, add, introduce, build, create
-- Story: as a user, need to, should be able to, requirement
-- Task: update, change, modify, fix, improve
+IMPORTANT RULES:
+1. NEVER use the raw client message as the title
+2. ALWAYS create a meaningful professional title
+3. ALWAYS write description as "As a X I need Y So that Z"
+4. ALWAYS generate minimum 3 acceptance criteria
+5. Each AC must follow Given/When/Then format
+6. Infer missing details from context intelligently
 
-Priority rules:
-- Critical: system down, cannot login, production broken, urgent
-- High: major feature broken, blocks users
-- Medium: feature issue but workaround exists
-- Low: minor UI, enhancement, nice to have
+TYPE RULES:
+- Bug: error, not working, broken, 500, crash, failed, wrong
+- Feature: new feature, add, introduce, build, create, need a
+- Story: as a user, need to, should be able to, requirement, update
+- Task: update, change, modify, fix, improve, configure
 
-Generate minimum 3 acceptance criteria in Given/When/Then format.
-Make the story title meaningful based on the client message using format: HUB>1>INC[incremental number]>[Short feature name].
-Make description follow "As a [user type] I need [what] So that [business value]" format exactly.
+PRIORITY RULES:
+- Critical: system down, cannot login, production broken, urgent, ASAP
+- High: major feature broken, blocks multiple users, important
+- Medium: feature update, enhancement, improvement needed
+- Low: minor UI change, nice to have, cosmetic
 
-Client name: "${clientName}"
-Client message: "${messageText || "(no text — see attached image if any)"}"
+CLIENT NAME: "${clientName}"
+CLIENT MESSAGE: "${messageText || "(no text — see attached image if any)"}"
 
-Return ONLY valid JSON. No markdown. No extra text.`;
+Analyze the message carefully and generate a complete professional story.
+Return ONLY the JSON object above with all fields filled in properly.`;
 
   const content = [{ type: "text", text: prompt }];
 
@@ -126,27 +142,38 @@ Return ONLY valid JSON. No markdown. No extra text.`;
       response.content[0]?.type === "text" ? response.content[0].text : "";
 
     const clean = responseText
-      .replace(/```json/gi, "")
+      .replace(/```json/g, "")
       .replace(/```/g, "")
       .trim();
 
     const result = JSON.parse(clean);
 
     const storyTitle =
-      result.storyTitle ??
-      (messageText.substring(0, 80) || "Client message");
+      result.storyTitle ?? `DeliveryPulse > General > ${messageText.substring(0, 50)}`;
 
-    const acceptanceCriteriaFormatted = Array.isArray(result.acceptanceCriteria)
-      ? result.acceptanceCriteria.map((ac, i) =>
-          typeof ac === "object"
-            ? ac
-            : { id: `AC ${i + 1}`, given: "", when: "", then: ac }
-        )
+    // Normalise ACs — support both { id, scenario } and { id, given, when, then }
+    const rawACs = Array.isArray(result.acceptanceCriteria)
+      ? result.acceptanceCriteria
       : [];
 
+    const acceptanceCriteriaFormatted = rawACs.map((ac, i) => {
+      if (typeof ac === "string") {
+        return { id: `AC ${i + 1}`, given: "", when: "", then: ac };
+      }
+      if (ac.scenario) {
+        return { id: ac.id ?? `AC ${i + 1}`, given: "", when: "", then: ac.scenario };
+      }
+      return {
+        id: ac.id ?? `AC ${i + 1}`,
+        given: ac.given ?? "",
+        when: ac.when ?? "",
+        then: ac.then ?? "",
+      };
+    });
+
     // Flat string array for legacy acceptanceCriteria field
-    const acceptanceCriteria = acceptanceCriteriaFormatted.map(
-      (ac) => `${ac.id}\n${ac.given}\n${ac.when}\n${ac.then}`
+    const acceptanceCriteria = rawACs.map((ac) =>
+      typeof ac === "string" ? ac : ac.scenario ?? `${ac.given ?? ""} ${ac.when ?? ""} ${ac.then ?? ""}`.trim()
     );
 
     return {

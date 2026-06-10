@@ -68,13 +68,17 @@ export async function createDraftStory({
     organisationId,
     clientId,
     storyTitle: aiResult.storyTitle ?? aiResult.title,
-    title: aiResult.title,
+    title: aiResult.storyTitle ?? aiResult.title,
     description: aiResult.description,
     descriptionStatement: aiResult.description,
     type: aiResult.type ?? "Story",
     priority: aiResult.priority ?? "Medium",
     status: "pending-review",
-    acceptanceCriteria: aiResult.acceptanceCriteria ?? [],
+    acceptanceCriteria: Array.isArray(aiResult.acceptanceCriteria)
+      ? aiResult.acceptanceCriteria.map((ac) =>
+          typeof ac === "object" ? (ac.scenario ?? ac.then ?? JSON.stringify(ac)) : ac
+        )
+      : [],
     acceptanceCriteriaFormatted: aiResult.acceptanceCriteriaFormatted ?? [],
     releaseNotes: aiResult.releaseNotes ?? "",
     source: "slack",
