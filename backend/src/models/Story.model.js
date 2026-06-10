@@ -18,6 +18,11 @@ const storySchema = new mongoose.Schema({
     required: true,
   },
 
+  // Enterprise story title in HUB>1>INC[n]>[feature] format
+  storyTitle: {
+    type: String,
+  },
+
   // Short title shown in review queue and ADO
   title: {
     type: String,
@@ -26,6 +31,11 @@ const storySchema = new mongoose.Schema({
 
   // Full description / acceptance context
   description: {
+    type: String,
+  },
+
+  // "As a... I need... So that..." user story statement
+  descriptionStatement: {
     type: String,
   },
 
@@ -55,9 +65,22 @@ const storySchema = new mongoose.Schema({
     default: "pending-review",
   },
 
-  // List of "given/when/then" or bullet criteria
+  // List of "given/when/then" or bullet criteria (flat strings, legacy)
   acceptanceCriteria: {
     type: [String],
+    default: [],
+  },
+
+  // Structured AC objects: { id, given, when, then }
+  acceptanceCriteriaFormatted: {
+    type: [
+      {
+        id: String,
+        given: String,
+        when: String,
+        then: String,
+      },
+    ],
     default: [],
   },
 
