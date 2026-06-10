@@ -2,6 +2,7 @@
 
 import SlackMessage from "../../models/SlackMessage.model.js";
 import SlackWorkspace from "../../models/SlackWorkspace.model.js";
+import { resolveWorkspaceContext } from "../../utils/workspaceContext.js";
 
 function formatTimeAgo(date) {
   if (!date) return "";
@@ -167,15 +168,19 @@ export async function listMessages(req, res) {
     );
     const teamIds = allWorkspaces.map((w) => w.teamId).filter(Boolean);
 
-    console.log("[listMessages] org:", organisationId, "| workspaces:", teamIds);
+    // Resolve x-workspace-id header → specific workspace if one is selected
+    const wsContext = await resolveWorkspaceContext(req, organisationId);
+    const selectedTeamId = wsContext.teamId ?? null;
 
-    // Dual filter: messages saved with this org's ID  OR  messages from any
-    // teamId that belongs to this org's workspaces.
-    // The teamId fallback catches messages saved under a previous organisationId
-    // when a workspace was reconnected after an account recreate.
-    const messageFilter = teamIds.length > 0
-      ? { $or: [{ organisationId }, { teamId: { $in: teamIds } }] }
-      : { organisationId };
+    console.log("[listMessages] org:", organisationId, "| workspaces:", teamIds, "| selected teamId:", selectedTeamId ?? "all");
+
+    // If a specific workspace is selected, filter to its teamId only.
+    // Otherwise show all messages across every workspace in the org.
+    const messageFilter = selectedTeamId
+      ? { teamId: selectedTeamId }
+      : teamIds.length > 0
+        ? { $or: [{ organisationId }, { teamId: { $in: teamIds } }] }
+        : { organisationId };
 
     const messages = await SlackMessage.find(messageFilter)
       .sort({ createdAt: -1 })
