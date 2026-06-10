@@ -71,8 +71,14 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Security headers — registered after CORS so CORS headers are written first
-app.use(helmet({ contentSecurityPolicy: false }));
+// Security headers — registered after CORS so CORS headers are written first.
+// crossOriginResourcePolicy must be "cross-origin" so the Vercel frontend
+// (different domain) can read API responses in the browser.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: false,
+}));
 
 // Parse JSON request bodies (POST/PUT/PATCH)
 app.use(express.json());
