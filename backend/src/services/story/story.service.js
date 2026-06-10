@@ -73,6 +73,7 @@ export async function createDraftStory({
     priority: aiResult.priority ?? "Medium",
     status: "pending-review",
     acceptanceCriteria: aiResult.acceptanceCriteria ?? [],
+    releaseNotes: aiResult.releaseNotes ?? "",
     source: "slack",
     sourceRef: sourceRef.toString(),
     sourceQuote,
@@ -214,6 +215,7 @@ export async function updateStory(storyId, updates = {}) {
   if (updates.acceptanceCriteria != null) {
     patch.acceptanceCriteria = updates.acceptanceCriteria;
   }
+  if (updates.releaseNotes != null) patch.releaseNotes = updates.releaseNotes;
   if (updates.sprint != null) patch.sprint = updates.sprint;
   if (updates.assignee != null) patch.assignee = updates.assignee;
 

@@ -83,6 +83,11 @@ const storySchema = new mongoose.Schema({
     type: String,
   },
 
+  releaseNotes: {
+    type: String,
+    default: "",
+  },
+
   sprint: {
     type: String,
   },

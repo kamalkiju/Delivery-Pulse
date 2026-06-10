@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// ai.service.js — Claude API integration (DeliveryPulse “brain”)
+// ai.service.js — Claude API integration (DeliveryPulse "brain")
 //
-// Claude = Anthropic’s AI. We send the client’s Slack text (+ optional screenshot)
+// Claude = Anthropic's AI. We send the client's Slack text (+ optional screenshot)
 // and get back JSON describing a Bug/Story, title, priority, and acceptance criteria.
 // That JSON becomes a draft work item in the Review Queue.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ function buildFallbackResult(messageText) {
     description: safeText,
     priority: "Medium",
     acceptanceCriteria: [],
+    releaseNotes: "",
     isRegression: false,
     suggestedSprint: "Backlog",
   };
@@ -48,36 +49,53 @@ export async function analyzeMessage({
     return buildFallbackResult(messageText);
   }
 
-  // Instructions for Claude: return ONLY JSON, no markdown or extra commentary
-  const prompt = `You are an expert IT project analyst for a software delivery company. Analyze this client message carefully.
+  const prompt = `You are an expert IT project analyst for a software delivery company. Analyze the client message below and extract a structured work item.
 
-Classification rules:
-- If message mentions: error, bug, not working, broken, crash, failed, 500, 404, exception → type = "Bug"
-- If message mentions: new feature, add, create, build, need, want, require → type = "Feature"
-- If message mentions: as a user, user story, should be able to → type = "Story"
+STRUCTURED FORMAT DETECTION:
+If the message contains explicit sections like "Story Title:", "Description & Value statement:", "Acceptance Criteria:", or "Release Notes:", treat it as a pre-written story and extract those sections directly — do not rewrite or summarize them.
+
+For unstructured messages, derive fields from context using the rules below.
+
+CLASSIFICATION (for unstructured messages):
+- error, bug, not working, broken, crash, failed, 500, 404, exception → type = "Bug"
+- new feature, add, create, build, need, want, require, enhance → type = "Feature"
+- as a user/role, user story, should be able to, I need → type = "Story"
 - Otherwise → type = "Task"
 
-Priority rules:
-- Critical: system down, 500 error, cannot login, production broken, urgent, ASAP
+PRIORITY:
+- Critical: system down, production broken, cannot login, urgent, ASAP
 - High: major feature broken, blocks many users
-- Medium: feature issue but workaround exists
+- Medium: feature issue but workaround exists, standard new feature
 - Low: minor UI, enhancement, nice to have
 
-Return ONLY valid JSON:
+ACCEPTANCE CRITERIA FORMAT:
+- For structured messages: extract each AC block verbatim as a single string, preserving the "AC N:" label and all Given/When/Then lines joined with newlines (e.g. "AC 1:\nGiven the user...\nWhen...\nThen...")
+- For unstructured: write clear Given/When/Then criteria as individual strings
+
+FIELD RULES:
+- title: exact value after "Story Title:" if present; otherwise a concise summary (max 120 chars)
+- description: the full user story value statement ("As a... I need... So that...") if present; otherwise a clear description
+- releaseNotes: exact text after "Release Notes:" if present; otherwise empty string ""
+- suggestedSprint: "Current" if urgent/critical, otherwise "Backlog"
+
+Return ONLY valid JSON (no markdown, no explanation):
 {
-  "type": "Bug",
-  "title": "Login returning 500 Internal Server Error",
-  "description": "The login page is returning a 500 error. Users are unable to log in to the system.",
-  "priority": "Critical",
+  "type": "Story",
+  "title": "Add Cradle to Grave Receipts Report to HUB Reporting",
+  "description": "As a HUB user\nI need to run the Cradle to Grave Receipts report\nSo that I can track waste containers from receipt through final disposal.",
+  "priority": "Medium",
   "acceptanceCriteria": [
-    "Login page loads without errors",
-    "Users can successfully authenticate",
-    "No 500 errors in server logs"
+    "AC 1:\nGiven the user navigates to Hub Reporting\nWhen the user selects the report\nThen the system displays the report criteria fields.",
+    "AC 2:\nGiven the user enters criteria\nWhen the system processes the request\nThen the report reflects the selected parameters."
   ],
-  "suggestedSprint": "Current"
+  "releaseNotes": "We introduced the report to provide audit-ready cradle-to-grave tracking of waste containers.",
+  "suggestedSprint": "Backlog"
 }
 
-Client (${clientName}) message: "${messageText || "(no text — see attached image if any)"}"`;
+Client (${clientName}) message:
+"""
+${messageText || "(no text — see attached image if any)"}
+"""`;
 
   // Claude messages API expects an array of content blocks (text + optional image)
   const content = [{ type: "text", text: prompt }];
@@ -121,7 +139,7 @@ Client (${clientName}) message: "${messageText || "(no text — see attached ima
     // messages.create = send user message to Claude and receive assistant reply
     const response = await claude.messages.create({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
+      max_tokens: 2000,
       messages: [{ role: "user", content }],
     });
 
@@ -144,6 +162,7 @@ Client (${clientName}) message: "${messageText || "(no text — see attached ima
       acceptanceCriteria: Array.isArray(result.acceptanceCriteria)
         ? result.acceptanceCriteria
         : [],
+      releaseNotes: result.releaseNotes ?? "",
       isRegression: Boolean(result.isRegression),
       suggestedSprint: result.suggestedSprint ?? "Backlog",
     };

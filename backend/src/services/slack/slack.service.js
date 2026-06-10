@@ -18,6 +18,7 @@ import { WebClient } from "@slack/web-api";
 import SlackMessage from "../../models/SlackMessage.model.js";
 import SlackWorkspace from "../../models/SlackWorkspace.model.js";
 import SlackChannel from "../../models/SlackChannel.model.js";
+import Story from "../../models/Story.model.js";
 import aiService from "../ai/ai.service.js";
 import storyService from "../story/story.service.js";
 import slackReply from "./slack.reply.js";
@@ -204,6 +205,90 @@ async function processIncomingMessage({ message, say, client, workspace }) {
 }
 
 /**
+ * Handle a Slack message_changed event — re-run AI on the updated text and
+ * update the linked story (if one was created from the original message).
+ */
+async function processEditedMessage({ event, workspace }) {
+  const edited = event.message;
+  if (!edited || edited.bot_id) return;
+
+  const channelId = event.channel;
+  const ts = edited.ts ?? event.previous_message?.ts;
+  const newText = edited.text ?? "";
+
+  if (!ts || !newText) return;
+
+  const teamId = event.team ?? workspace?.teamId ?? null;
+
+  let activeWorkspace = workspace;
+  if (!activeWorkspace && teamId) {
+    activeWorkspace = slackApps.get(teamId)?.workspace
+      ?? await SlackWorkspace.findOne({ teamId }).lean();
+  }
+  if (!activeWorkspace?.organisationId) return;
+
+  const organisationId = activeWorkspace.organisationId;
+
+  // Find the saved message by channel + timestamp
+  const savedMessage = await SlackMessage.findOne({ channelId, threadTs: ts });
+  if (!savedMessage) {
+    console.log("[slack] message_changed: no saved message found for ts:", ts);
+    return;
+  }
+
+  // Update stored text
+  savedMessage.messageText = newText;
+  await savedMessage.save();
+
+  // Only re-analyse if there's a linked story
+  if (!savedMessage.storyId) {
+    console.log("[slack] message_changed: message has no linked story, skipping AI");
+    return;
+  }
+
+  const story = await Story.findById(savedMessage.storyId);
+  if (!story) return;
+
+  // Only update stories that are still pending-review (not yet approved/pushed)
+  if (story.status !== "pending-review") {
+    console.log("[slack] message_changed: story already actioned, skipping AI update");
+    return;
+  }
+
+  // Look up client name for the AI prompt
+  const channelRecord = await SlackChannel.findOne({
+    organisationId,
+    channelId,
+  }).populate("clientId");
+
+  const clientName = channelRecord?.clientId?.name ?? "Client";
+
+  try {
+    const aiResult = await aiService.analyzeMessage({
+      text: newText,
+      imageUrl: null,
+      clientName,
+    });
+
+    await Story.findByIdAndUpdate(savedMessage.storyId, {
+      title: aiResult.title,
+      description: aiResult.description,
+      type: aiResult.type,
+      priority: aiResult.priority,
+      acceptanceCriteria: aiResult.acceptanceCriteria,
+      releaseNotes: aiResult.releaseNotes ?? "",
+      sprint: aiResult.suggestedSprint,
+      sourceQuote: newText,
+      updatedAt: new Date(),
+    });
+
+    console.log(`[slack] message_changed: story ${savedMessage.storyId} updated via AI re-analysis`);
+  } catch (err) {
+    console.error("[slack] message_changed AI re-analysis failed:", err.message);
+  }
+}
+
+/**
  * Register app.message on one workspace Bolt App.
  */
 function registerMessageListener(app, workspace) {
@@ -217,16 +302,19 @@ function registerMessageListener(app, workspace) {
     try {
       console.log(`[slack] app.message fired for workspace ${workspace.teamName} (${teamId})`);
 
-      // Re-read workspace from DB so we always have fresh isActive status
       const freshWorkspace = await SlackWorkspace.findOne({ teamId }).lean();
       if (!freshWorkspace) {
         console.log("[slack] Workspace not found in DB, skip:", teamId);
         return;
       }
 
-      // Update in-memory entry with fresh data
       const entry = slackApps.get(teamId);
       if (entry) entry.workspace = freshWorkspace;
+
+      if (message.subtype === "message_changed") {
+        await processEditedMessage({ event: message, workspace: freshWorkspace });
+        return;
+      }
 
       await processIncomingMessage({ message, say, client, workspace: freshWorkspace });
     } catch (err) {
@@ -303,17 +391,20 @@ async function ensureSocketCoordinator() {
 
       console.log("[slack] Socket coordinator received message for team:", teamId);
 
-      // Re-read workspace from DB (avoids stale isActive in memory)
       let freshWorkspace = await SlackWorkspace.findOne({ teamId }).lean();
       if (!freshWorkspace) {
         console.log("[slack] No workspace in DB for team:", teamId);
         return;
       }
 
-      // Register workspace in memory if missing (new workspace connected mid-session)
       if (!slackApps.has(teamId)) {
         await addWorkspace(freshWorkspace);
         freshWorkspace = slackApps.get(teamId)?.workspace ?? freshWorkspace;
+      }
+
+      if (message.subtype === "message_changed") {
+        await processEditedMessage({ event: message, workspace: freshWorkspace });
+        return;
       }
 
       await processIncomingMessage({ message, say, client, workspace: freshWorkspace });
