@@ -11,11 +11,10 @@ const storySchema = new mongoose.Schema({
     required: true,
   },
 
-  // Which client this story relates to
+  // Which client this story relates to (optional — document uploads may not have a client)
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Client",
-    required: true,
   },
 
   // Enterprise story title in HUB>1>INC[n]>[feature] format

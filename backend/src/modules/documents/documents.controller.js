@@ -155,7 +155,7 @@ ${inputText}`;
     const savedDoc = await Document.create({
       organisationId,
       projectId: projectId || null,
-      clientId: clientId || null,
+      clientId: clientId || undefined,
       originalName: file.originalname,
       fileType: validTypes.includes(fileExt) ? fileExt : "txt",
       fileSize: file.size,
@@ -170,7 +170,7 @@ ${inputText}`;
         const story = await Story.create({
           organisationId,
           projectId: projectId || null,
-          clientId: clientId || null,
+          clientId: clientId || undefined,
           title: storyData.storyTitle,
           storyTitle: storyData.storyTitle,
           description: storyData.description,
