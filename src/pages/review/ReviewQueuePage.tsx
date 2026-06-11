@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import AppShell from "../../components/layout/AppShell";
 import api from "../../api/axios";
 
@@ -27,6 +27,14 @@ interface Story {
   acceptanceCriteriaFormatted?: AcItem[];
   releaseNotes?: string;
   sprint?: string;
+  assignee?: string;
+  areaPath?: string;
+  tags?: string[];
+  figmaLink?: string;
+  userFlow?: string;
+  uiBehavior?: string;
+  businessRequirement?: string;
+  validations?: string[];
   adoId?: string;
   approvedAt?: string;
   updatedAt?: string;
@@ -47,17 +55,19 @@ interface EditForm {
   description: string;
   acceptanceCriteria: { id: string; scenario: string }[];
   releaseNotes: string;
+  sprint: string;
+  assignee: string;
+  areaPath: string;
+  tags: string[];
+  figmaLink: string;
+  userFlow: string;
+  uiBehavior: string;
+  validations: string[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const sid = (s: Story): string => s._id ?? s.id ?? "";
-
-const clientName = (s: Story): string => {
-  if (!s.clientId) return s.client ?? "";
-  if (typeof s.clientId === "string") return s.client ?? "";
-  return s.clientId.name ?? s.client ?? "";
-};
 
 const acText = (ac: string | AcItem): string => {
   if (typeof ac === "string") return ac;
@@ -109,6 +119,184 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 const fallbackColor = TYPE_COLORS.Story;
 
+const fieldLabel: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: "#374151",
+  display: "block",
+  marginBottom: 6,
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+};
+
+interface StoryCardProps {
+  story: Story;
+  tabSource: string;
+  deletingId: string | null;
+  onEdit: (story: Story) => void;
+  onReject: (storyId: string) => void;
+  onApprove: (storyId: string) => void;
+  onDelete?: (storyId: string) => void;
+}
+
+function StoryCard({ story, tabSource, deletingId, onEdit, onReject, onApprove, onDelete }: StoryCardProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const storyId = sid(story);
+  const colors = TYPE_COLORS[story.type] ?? fallbackColor;
+  const priorityColor = PRIORITY_COLORS[story.priority] ?? "#94a3b8";
+  const acList = story.acceptanceCriteriaFormatted?.length
+    ? story.acceptanceCriteriaFormatted
+    : (story.acceptanceCriteria ?? []);
+
+  return (
+    <div style={{
+      backgroundColor: "white",
+      borderRadius: 12,
+      border: "1px solid #e2e8f0",
+      marginBottom: 16,
+      borderLeft: `4px solid ${colors.border}`,
+      overflow: "hidden",
+    }}>
+      <div style={{ padding: "20px 24px" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <span style={{ backgroundColor: colors.bg, color: colors.text, padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
+            {story.type || "Story"}
+          </span>
+          <span style={{ backgroundColor: "#f1f5f9", color: "#64748b", padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 500 }}>
+            {story.ticketId || `DP-${storyId.slice(-4).toUpperCase()}`}
+          </span>
+          <span style={{ backgroundColor: priorityColor + "20", color: priorityColor, padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
+            {story.priority || "Medium"}
+          </span>
+          {story.isAIGenerated && (
+            <span style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "3px 10px", borderRadius: 999, fontSize: 12 }}>✨ AI Generated</span>
+          )}
+          {story.sprint && (
+            <span style={{ backgroundColor: "#faf5ff", color: "#7c3aed", padding: "3px 10px", borderRadius: 999, fontSize: 12 }}>📅 {story.sprint}</span>
+          )}
+          {tabSource === "slack" && (
+            <span style={{ backgroundColor: "#f8f0ff", color: "#7c3aed", padding: "3px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #e9d5ff" }}>💬 Slack</span>
+          )}
+          {tabSource === "document" && (
+            <span style={{ backgroundColor: "#fff7ed", color: "#c2410c", padding: "3px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #fed7aa" }}>📄 Document</span>
+          )}
+        </div>
+
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 4px", lineHeight: 1.4 }}>
+          {story.storyTitle || story.title}
+        </h3>
+
+        {story.areaPath && (
+          <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 12px", fontFamily: "monospace" }}>📂 {story.areaPath}</p>
+        )}
+
+        {story.description && (
+          <div style={{ backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+            <p style={{ fontSize: 13, color: "#334155", margin: 0, lineHeight: 1.7, fontStyle: "italic" }}>{story.description}</p>
+          </div>
+        )}
+
+        {story.sourceQuote && tabSource === "slack" && (
+          <div style={{ backgroundColor: "#f8fafc", borderLeft: "3px solid #7c3aed", padding: "8px 12px", borderRadius: "0 6px 6px 0", marginBottom: 14 }}>
+            <p style={{ fontSize: 12, color: "#64748b", fontStyle: "italic", margin: 0 }}>💬 Client said: &quot;{story.sourceQuote}&quot;</p>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setIsExpanded(!isExpanded)}
+          style={{ background: "none", border: "none", color: "#0088ff", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 500, display: "flex", alignItems: "center", gap: 6, marginBottom: isExpanded ? 12 : 0 }}
+        >
+          {isExpanded ? "▼" : "▶"} {isExpanded ? "Hide details" : "View full ADO details"}
+        </button>
+
+        {isExpanded && (
+          <div>
+            {story.businessRequirement && (
+              <div style={{ backgroundColor: "#eff6ff", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+                <p style={{ fontSize: 12, fontWeight: 700, color: "#1d4ed8", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>📋 Business Requirement</p>
+                <p style={{ fontSize: 13, color: "#1e3a5f", margin: 0, lineHeight: 1.6 }}>{story.businessRequirement}</p>
+              </div>
+            )}
+            {story.userFlow && (
+              <div style={{ backgroundColor: "#f0fdf4", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+                <p style={{ fontSize: 12, fontWeight: 700, color: "#166534", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>👤 User Flow</p>
+                <p style={{ fontSize: 13, color: "#14532d", margin: 0, lineHeight: 1.7, whiteSpace: "pre-line" }}>{story.userFlow}</p>
+              </div>
+            )}
+            {story.uiBehavior && (
+              <div style={{ backgroundColor: "#faf5ff", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+                <p style={{ fontSize: 12, fontWeight: 700, color: "#6b21a8", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>🖥️ UI Behavior</p>
+                <p style={{ fontSize: 13, color: "#3b0764", margin: 0, lineHeight: 1.6 }}>{story.uiBehavior}</p>
+              </div>
+            )}
+            {(story.validations?.length ?? 0) > 0 && (
+              <div style={{ backgroundColor: "#fffbeb", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+                <p style={{ fontSize: 12, fontWeight: 700, color: "#92400e", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>✅ Validations</p>
+                {story.validations!.map((v, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4, fontSize: 13, color: "#78350f" }}>
+                    <span style={{ flexShrink: 0 }}>•</span>
+                    <span>{v}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ backgroundColor: "#f8fafc", borderRadius: 8, padding: "12px 14px", marginBottom: 10, border: "1px solid #e2e8f0" }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: "#374151", margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                🎯 Acceptance Criteria ({acList.length})
+              </p>
+              {acList.map((ac, i) => (
+                <div key={i} style={{ backgroundColor: "white", border: "1px solid #e2e8f0", borderRadius: 6, padding: "10px 12px", marginBottom: 8, fontSize: 13, color: "#374151", lineHeight: 1.6 }}>
+                  <span style={{ fontWeight: 700, color: "#0088ff", marginRight: 8, fontSize: 12 }}>{acId(ac, i)}</span>
+                  {acText(ac)}
+                </div>
+              ))}
+            </div>
+            {story.releaseNotes && (
+              <div style={{ backgroundColor: "#f0fdf4", borderRadius: 8, padding: "12px 14px", marginBottom: 10, border: "1px solid #bbf7d0" }}>
+                <p style={{ fontSize: 12, fontWeight: 700, color: "#166534", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>📝 Release Notes</p>
+                <p style={{ fontSize: 13, color: "#14532d", margin: 0, lineHeight: 1.6 }}>{story.releaseNotes}</p>
+              </div>
+            )}
+            {story.sourceQuote && tabSource === "document" && (
+              <div style={{ backgroundColor: "#fff7ed", borderLeft: "3px solid #f97316", padding: "8px 12px", borderRadius: "0 6px 6px 0", marginBottom: 10 }}>
+                <p style={{ fontSize: 12, color: "#9a3412", fontStyle: "italic", margin: 0 }}>📄 {story.sourceQuote}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(story.tags?.length ?? 0) > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
+            {story.tags!.map((tag, i) => (
+              <span key={i} style={{ backgroundColor: "#f1f5f9", color: "#475569", padding: "2px 8px", borderRadius: 4, fontSize: 11, border: "1px solid #e2e8f0", fontFamily: "monospace" }}>#{tag}</span>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 14, borderTop: "1px solid #f1f5f9" }}>
+          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#94a3b8", alignItems: "center" }}>
+            {story.assignee ? <span>👤 {story.assignee}</span> : <span style={{ color: "#e2e8f0" }}>👤 Unassigned</span>}
+            {typeof story.clientId === "object" && story.clientId?.name && <span>🏢 {story.clientId.name}</span>}
+            <span>🕐 {story.timeAgo || new Date(story.createdAt ?? Date.now()).toLocaleDateString()}</span>
+            {story.regressionWarning && <span style={{ color: "#f59e0b" }}>⚠ {story.regressionWarning}</span>}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => onEdit(story)} style={{ padding: "7px 16px", backgroundColor: "#3b82f6", color: "white", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
+            {tabSource === "document" && onDelete && (
+              <button type="button" onClick={() => onDelete(storyId)} disabled={deletingId === storyId} style={{ padding: "7px 12px", backgroundColor: "white", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: 7, cursor: deletingId === storyId ? "not-allowed" : "pointer", fontSize: 13 }}>
+                {deletingId === storyId ? "..." : "🗑️"}
+              </button>
+            )}
+            <button type="button" onClick={() => onReject(storyId)} style={{ padding: "7px 16px", backgroundColor: "#ef4444", color: "white", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
+            <button type="button" onClick={() => onApprove(storyId)} style={{ padding: "7px 16px", backgroundColor: "#16a34a", color: "white", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>✓ Approve</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState({ icon, title, subtitle, buttonText, buttonAction }: {
@@ -141,10 +329,21 @@ const ReviewQueuePage = () => {
   const [editingStory, setEditingStory]       = useState<Story | null>(null);
   const [isEditPanelOpen, setIsEditPanelOpen] = useState(false);
   const [editForm, setEditForm]               = useState<EditForm>({
-    storyTitle: "", type: "Story", priority: "Medium",
-    description: "", acceptanceCriteria: [], releaseNotes: "",
+    storyTitle: "",
+    type: "Story",
+    priority: "Medium",
+    description: "",
+    acceptanceCriteria: [],
+    releaseNotes: "",
+    sprint: "Current",
+    assignee: "",
+    areaPath: "",
+    tags: [],
+    figmaLink: "",
+    userFlow: "",
+    uiBehavior: "",
+    validations: [],
   });
-  const [expanded, setExpanded]               = useState<Record<string, boolean>>({});
   const [deletingId, setDeletingId]           = useState<string | null>(null);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
@@ -264,6 +463,14 @@ const ReviewQueuePage = () => {
       description: story.description ?? "",
       acceptanceCriteria: acs,
       releaseNotes: story.releaseNotes ?? "",
+      sprint: story.sprint ?? "Current",
+      assignee: story.assignee ?? "",
+      areaPath: story.areaPath ?? "",
+      tags: story.tags ?? [],
+      figmaLink: story.figmaLink ?? "",
+      userFlow: story.userFlow ?? "",
+      uiBehavior: story.uiBehavior ?? "",
+      validations: story.validations ?? [],
     });
     setIsEditPanelOpen(true);
   };
@@ -280,6 +487,14 @@ const ReviewQueuePage = () => {
         acceptanceCriteria: editForm.acceptanceCriteria.map((ac) => ac.scenario),
         acceptanceCriteriaFormatted: editForm.acceptanceCriteria,
         releaseNotes: editForm.releaseNotes,
+        sprint: editForm.sprint,
+        assignee: editForm.assignee,
+        areaPath: editForm.areaPath,
+        tags: editForm.tags,
+        figmaLink: editForm.figmaLink,
+        userFlow: editForm.userFlow,
+        uiBehavior: editForm.uiBehavior,
+        validations: editForm.validations,
       });
       setIsEditPanelOpen(false);
       fetchAllStories();
@@ -288,117 +503,18 @@ const ReviewQueuePage = () => {
     }
   };
 
-  const toggleExpand = (id: string) =>
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
-
-  // ── Story card ─────────────────────────────────────────────────────────────
-
-  const renderStoryCard = (story: Story, tabSource: string) => {
-    const storyId   = sid(story);
-    const tc        = TYPE_COLORS[story.type] ?? fallbackColor;
-    const isOpen    = expanded[storyId];
-    const acs: (string | AcItem)[] = story.acceptanceCriteriaFormatted?.length
-      ? story.acceptanceCriteriaFormatted
-      : (story.acceptanceCriteria ?? []);
-    const name = clientName(story);
-
-    return (
-      <div key={storyId} style={{ backgroundColor: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", borderLeft: `4px solid ${tc.border}`, marginBottom: 16, overflow: "hidden" }}>
-        <div style={{ padding: "16px 20px" }}>
-
-          {/* Badges */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-            <span style={{ backgroundColor: tc.bg, color: tc.text, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{story.type}</span>
-            <span style={{ backgroundColor: "#f1f5f9", color: "#475569", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
-              {story.ticketId ?? `DP-${storyId.slice(-4).toUpperCase()}`}
-            </span>
-            {story.isAIGenerated !== false && (
-              <span style={{ backgroundColor: "#f0f0ff", color: "#6d28d9", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>✨ AI</span>
-            )}
-            <span style={{ backgroundColor: (PRIORITY_COLORS[story.priority] ?? "#94a3b8") + "20", color: PRIORITY_COLORS[story.priority] ?? "#94a3b8", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{story.priority}</span>
-            {tabSource === "slack" && <span style={{ backgroundColor: "#f8f0ff", color: "#7c3aed", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #e9d5ff" }}>💬 Slack</span>}
-            {tabSource === "document" && <span style={{ backgroundColor: "#fff7ed", color: "#c2410c", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #fed7aa" }}>📄 Document</span>}
-          </div>
-
-          {/* Title */}
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", margin: "0 0 8px", lineHeight: 1.4 }}>
-            {story.storyTitle ?? story.title}
-          </h3>
-
-          {/* Description */}
-          {story.description && (
-            <p style={{ fontSize: 13, color: "#475569", margin: "0 0 10px", lineHeight: 1.6 }}>{story.description}</p>
-          )}
-
-          {/* Client quote */}
-          {story.sourceQuote && (
-            <div style={{ backgroundColor: "#f8fafc", borderLeft: "3px solid #cbd5e1", padding: "8px 12px", borderRadius: "0 6px 6px 0", marginBottom: 10 }}>
-              <p style={{ fontSize: 12, color: "#64748b", fontStyle: "italic", margin: 0 }}>💬 "{story.sourceQuote}"</p>
-            </div>
-          )}
-
-          {/* Acceptance Criteria — collapsible */}
-          {acs.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <button type="button" onClick={() => toggleExpand(storyId)}
-                style={{ background: "none", border: "none", color: "#0088ff", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
-                {isOpen ? "▼" : "▶"} Acceptance Criteria ({acs.length})
-              </button>
-              {isOpen && (
-                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                  {acs.map((ac, i) => (
-                    <div key={i} style={{ backgroundColor: "#f8fafc", borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "#374151", lineHeight: 1.6 }}>
-                      <span style={{ fontWeight: 700, color: "#0088ff" }}>{acId(ac, i)}:</span>{" "}{acText(ac)}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Release notes — when expanded */}
-          {story.releaseNotes && isOpen && (
-            <div style={{ backgroundColor: "#f0fdf4", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#166534" }}>
-              <span style={{ fontWeight: 600 }}>📋 Release Notes: </span>{story.releaseNotes}
-            </div>
-          )}
-
-          {/* Footer */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #f1f5f9" }}>
-            <div style={{ fontSize: 12, color: "#94a3b8" }}>
-              {name && <span style={{ marginRight: 12 }}>👤 {name}</span>}
-              <span>🕐 {story.timeAgo ?? new Date(story.createdAt ?? Date.now()).toLocaleDateString()}</span>
-              {story.regressionWarning && <span style={{ marginLeft: 12, color: "#f59e0b" }}>⚠ {story.regressionWarning}</span>}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" onClick={() => handleEditClick(story)} style={{ padding: "6px 14px", backgroundColor: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
-              <button type="button" onClick={() => handleReject(storyId)} style={{ padding: "6px 14px", backgroundColor: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
-              <button type="button" onClick={() => handleApprove(storyId)} style={{ padding: "6px 14px", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Approve</button>
-              {(story.source === "document" || tabSource === "document") && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteStory(storyId)}
-                  disabled={deletingId === storyId}
-                  style={{
-                    padding: "6px 16px",
-                    backgroundColor: "white",
-                    color: "#dc2626",
-                    border: "1px solid #dc2626",
-                    borderRadius: 6,
-                    cursor: deletingId === storyId ? "not-allowed" : "pointer",
-                    fontSize: 13,
-                    fontWeight: 500,
-                  }}
-                >
-                  {deletingId === storyId ? "..." : "🗑️"}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const renderStoryCard = (story: Story, tabSource: string) => (
+    <StoryCard
+      key={sid(story)}
+      story={story}
+      tabSource={tabSource}
+      deletingId={deletingId}
+      onEdit={handleEditClick}
+      onReject={handleReject}
+      onApprove={handleApprove}
+      onDelete={tabSource === "document" ? handleDeleteStory : undefined}
+    />
+  );
 
   // ── ADO card ───────────────────────────────────────────────────────────────
 
@@ -543,24 +659,22 @@ const ReviewQueuePage = () => {
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-            {/* Story Title */}
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Story Title</label>
+              <label style={fieldLabel}>Story Title</label>
               <input value={editForm.storyTitle} onChange={(e) => setEditForm({ ...editForm, storyTitle: e.target.value })}
                 style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }} />
             </div>
 
-            {/* Type + Priority */}
             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
               <div style={{ flex: 1 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Type</label>
+                <label style={fieldLabel}>Type</label>
                 <select value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
                   style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}>
                   <option>Bug</option><option>Story</option><option>Feature</option><option>Task</option>
                 </select>
               </div>
               <div style={{ flex: 1 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Priority</label>
+                <label style={fieldLabel}>Priority</label>
                 <select value={editForm.priority} onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })}
                   style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}>
                   <option>Critical</option><option>High</option><option>Medium</option><option>Low</option>
@@ -568,17 +682,65 @@ const ReviewQueuePage = () => {
               </div>
             </div>
 
-            {/* Description */}
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Description & Value Statement</label>
+              <label style={fieldLabel}>Sprint</label>
+              <select value={editForm.sprint} onChange={(e) => setEditForm({ ...editForm, sprint: e.target.value })}
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}>
+                <option>Current</option><option>Next</option><option>Backlog</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Assignee</label>
+              <input value={editForm.assignee} onChange={(e) => setEditForm({ ...editForm, assignee: e.target.value })}
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Area Path</label>
+              <input value={editForm.areaPath} onChange={(e) => setEditForm({ ...editForm, areaPath: e.target.value })}
+                placeholder="Project\Area\Feature"
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Tags</label>
+              <input
+                value={editForm.tags.join(", ")}
+                onChange={(e) => setEditForm({ ...editForm, tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
+                placeholder="tag1, tag2, tag3"
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Figma Link</label>
+              <input value={editForm.figmaLink} onChange={(e) => setEditForm({ ...editForm, figmaLink: e.target.value })}
+                placeholder="https://figma.com/..."
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Description</label>
               <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
                 placeholder="As a [user] I need [what] So that [value]"
                 style={{ width: "100%", height: 100, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
             </div>
 
-            {/* ACs */}
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Acceptance Criteria</label>
+              <label style={fieldLabel}>User Flow</label>
+              <textarea value={editForm.userFlow} onChange={(e) => setEditForm({ ...editForm, userFlow: e.target.value })}
+                style={{ width: "100%", height: 80, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>UI Behavior</label>
+              <textarea value={editForm.uiBehavior} onChange={(e) => setEditForm({ ...editForm, uiBehavior: e.target.value })}
+                style={{ width: "100%", height: 80, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Acceptance Criteria</label>
               {editForm.acceptanceCriteria.map((ac, idx) => (
                 <div key={idx} style={{ marginBottom: 10 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "#0088ff", marginBottom: 4 }}>{ac.id || `AC ${idx + 1}`}</div>
@@ -599,9 +761,8 @@ const ReviewQueuePage = () => {
               </button>
             </div>
 
-            {/* Release Notes */}
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Release Notes</label>
+              <label style={fieldLabel}>Release Notes</label>
               <textarea value={editForm.releaseNotes} onChange={(e) => setEditForm({ ...editForm, releaseNotes: e.target.value })}
                 style={{ width: "100%", height: 80, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
             </div>

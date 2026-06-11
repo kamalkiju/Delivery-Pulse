@@ -241,6 +241,13 @@ export async function updateStory(storyId, updates = {}) {
   if (updates.releaseNotes != null) patch.releaseNotes = updates.releaseNotes;
   if (updates.sprint != null) patch.sprint = updates.sprint;
   if (updates.assignee != null) patch.assignee = updates.assignee;
+  if (updates.areaPath != null) patch.areaPath = updates.areaPath;
+  if (updates.tags != null) patch.tags = updates.tags;
+  if (updates.figmaLink != null) patch.figmaLink = updates.figmaLink;
+  if (updates.userFlow != null) patch.userFlow = updates.userFlow;
+  if (updates.uiBehavior != null) patch.uiBehavior = updates.uiBehavior;
+  if (updates.businessRequirement != null) patch.businessRequirement = updates.businessRequirement;
+  if (updates.validations != null) patch.validations = updates.validations;
 
   const story = await Story.findByIdAndUpdate(storyId, patch, {
     new: true,

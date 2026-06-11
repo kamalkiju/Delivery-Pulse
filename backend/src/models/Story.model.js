@@ -120,6 +120,36 @@ const storySchema = new mongoose.Schema({
     type: String,
   },
 
+  areaPath: {
+    type: String,
+  },
+
+  tags: {
+    type: [String],
+    default: [],
+  },
+
+  figmaLink: {
+    type: String,
+  },
+
+  userFlow: {
+    type: String,
+  },
+
+  uiBehavior: {
+    type: String,
+  },
+
+  businessRequirement: {
+    type: String,
+  },
+
+  validations: {
+    type: [String],
+    default: [],
+  },
+
   // Display name or email of assignee (can link to User later)
   assignee: {
     type: String,
