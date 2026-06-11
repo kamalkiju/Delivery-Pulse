@@ -31,39 +31,6 @@ function parseChunkResponse(text) {
   }
 }
 
-/** Map Claude AC objects → Story model string + formatted fields */
-function mapAcceptanceCriteria(storyData) {
-  const raw = storyData.acceptanceCriteria || [];
-  const acceptanceCriteria = raw
-    .map((ac) => {
-      if (typeof ac === "string") return ac;
-      return (
-        ac.scenario ||
-        ac.then ||
-        ac.given ||
-        `${ac.given || ""} ${ac.when || ""} ${ac.then || ""}`.trim() ||
-        JSON.stringify(ac)
-      );
-    })
-    .filter(Boolean);
-
-  const acceptanceCriteriaFormatted = raw
-    .map((ac, i) => ({
-      id: ac.id || `AC ${i + 1}`,
-      scenario:
-        ac.scenario ||
-        ac.then ||
-        `${ac.given || ""} ${ac.when || ""} ${ac.then || ""}`.trim() ||
-        (typeof ac === "string" ? ac : JSON.stringify(ac)),
-      given: ac.given || "",
-      when: ac.when || "",
-      then: ac.then || ac.scenario || "",
-    }))
-    .filter((ac) => ac.scenario);
-
-  return { acceptanceCriteria, acceptanceCriteriaFormatted };
-}
-
 export const uploadDocument = async (req, res) => {
   try {
     const { projectId, clientId } = req.body;
@@ -159,8 +126,6 @@ export const uploadDocument = async (req, res) => {
 The document uses Epics as main categories.
 Each Epic contains multiple user stories.
 Create one story per user story found.
-Use the Epic name as the prefix in storyTitle:
-Example: 'Epic 1: User Access > Login with Email'
 
 Look for patterns like:
 - 'As a user I want...'
@@ -171,8 +136,43 @@ Each of these is a separate story.
 Count every 'As a' statement as one story.
 Do not combine multiple As-a statements into one story.
 
+CRITICAL TITLE RULE:
+Story title MUST always contain > separator.
+Format: 'Epic Name > Feature Name'
+For Product Vision or general requirements use:
+'Product Vision > [Feature Name]'
+NOT 'Product Vision: [Feature Name]'
+Always use > as separator not : or -
+
+CRITICAL DESCRIPTION RULE:
+Every description MUST follow EXACTLY this format:
+'As a [specific user role] I need [specific feature/capability] So that [specific business value/outcome]'
+
+NEVER write description as:
+- 'The system should...'
+- 'Users can...'
+- 'This feature...'
+- 'Implement...'
+
+ALWAYS start with 'As a' and include 'So that'
+If you cannot identify user role use 'As a user'
+If you cannot identify value use 'So that the experience is improved'
+
+CRITICAL AC RULE:
+Every story MUST have EXACTLY 3 acceptance criteria minimum.
+Never create a story with 1 or 2 AC.
+
+If you can only think of 2 AC add a third covering:
+  - Error scenario: Given [error] When [action] Then [error shown]
+  - OR Edge case: Given [edge case] When [action] Then [result]
+  - OR Validation: Given [invalid input] When [submitted] Then [validation shown]
+
+If you can only think of 1 AC add two more covering:
+  - Happy path variant
+  - Error scenario
+
 Return ONLY this JSON structure, nothing else:
-{"stories":[{"storyTitle":"Epic 1: User Access > Login with Email","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X","sprint":"Current"}]}
+{"stories":[{"storyTitle":"User Access > Login with Email","type":"Story","priority":"Medium","description":"As a registered user I need to log in with email So that I can access my account securely","acceptanceCriteria":[{"id":"AC 1","scenario":"Given valid credentials When user logs in Then access is granted"},{"id":"AC 2","scenario":"Given invalid password When user logs in Then error message is shown"},{"id":"AC 3","scenario":"Given empty fields When user submits Then validation is shown"}],"releaseNotes":"We introduced login","sprint":"Current"}]}
 
 Extract every requirement. Return raw JSON only.
 
@@ -267,6 +267,92 @@ ${chunk}`;
     });
     console.log("[document] After dedup:", allStories.length, "stories");
 
+    console.log("[document] Starting post-processing validation...");
+
+    allStories = allStories.map((story) => {
+      if (!story.storyTitle?.includes(">")) {
+        story.storyTitle = story.storyTitle?.replace(/:\s+/, " > ") ||
+          `General > ${story.storyTitle}`;
+      }
+
+      const desc = story.description || "";
+      const hasAsA = desc.toLowerCase().includes("as a");
+      const hasSoThat = desc.toLowerCase().includes("so that");
+
+      if (!hasAsA || !hasSoThat) {
+        const featureName = story.storyTitle?.split(">")?.pop()?.trim() ||
+          "this feature";
+
+        if (hasAsA && !hasSoThat) {
+          story.description = `${desc} So that the ${featureName.toLowerCase()} works correctly and meets business requirements`;
+        } else {
+          story.description = `As a user I need ${featureName.toLowerCase()} So that I can complete my tasks efficiently and the business requirement is met`;
+        }
+      }
+
+      const acArray = story.acceptanceCriteria || [];
+
+      while (acArray.length < 3) {
+        const acNum = acArray.length + 1;
+        const feature = story.storyTitle?.split(">")?.pop()?.trim() || "feature";
+
+        if (acNum === 1) {
+          acArray.push({
+            id: "AC 1",
+            scenario: `Given the user navigates to the ${feature.toLowerCase()} screen When the page loads Then all required elements are displayed correctly and the feature is accessible`,
+          });
+        } else if (acNum === 2) {
+          acArray.push({
+            id: "AC 2",
+            scenario: "Given the user performs the main action When the system processes the request Then the expected result is shown and data is saved correctly",
+          });
+        } else {
+          acArray.push({
+            id: `AC ${acNum}`,
+            scenario: "Given an error or edge case occurs When the user performs the action Then an appropriate error message is displayed and the user is guided to correct the issue",
+          });
+        }
+      }
+
+      story.acceptanceCriteria = acArray.map((ac, i) => ({
+        id: `AC ${i + 1}`,
+        scenario: typeof ac === "string" ? ac : ac.scenario || ac.then || "",
+      })).filter((ac) => ac.scenario);
+
+      return story;
+    });
+
+    console.log("[document] Post-processing complete");
+    console.log("[document] Desc OK:",
+      allStories.filter((s) =>
+        s.description?.toLowerCase().includes("as a") &&
+        s.description?.toLowerCase().includes("so that"),
+      ).length + "/" + allStories.length);
+    console.log("[document] AC >= 3:",
+      allStories.filter((s) => s.acceptanceCriteria?.length >= 3).length +
+      "/" + allStories.length);
+
+    allStories.sort((a, b) => {
+      const getEpicNum = (title) => {
+        const epicMatch = title?.match(/Epic\s+(\d+)/i);
+        if (epicMatch) return parseInt(epicMatch[1]);
+        if (title?.includes("User Goals")) return 0;
+        if (title?.includes("Product Vision")) return 0;
+        return 999;
+      };
+
+      const epicA = getEpicNum(a.storyTitle);
+      const epicB = getEpicNum(b.storyTitle);
+
+      if (epicA !== epicB) return epicA - epicB;
+
+      return (a.storyTitle || "").localeCompare(b.storyTitle || "");
+    });
+
+    console.log("[document] After sorting:");
+    console.log("[document] First:", allStories[0]?.storyTitle);
+    console.log("[document] Last:", allStories[allStories.length - 1]?.storyTitle);
+
     // ── Save document record (VALIDATION 4 — owner + org) ─────────────────────
     const savedDoc = await Document.create({
       organisationId,
@@ -283,12 +369,15 @@ ${chunk}`;
 
     // ── Save stories to Review Queue ──────────────────────────────────────────
     const createdStories = [];
-    for (const storyData of allStories) {
-      try {
-        const { acceptanceCriteria, acceptanceCriteriaFormatted } =
-          mapAcceptanceCriteria(storyData);
+    for (let i = 0; i < allStories.length; i++) {
+      const storyData = allStories[i];
 
-        // VALIDATION 5 — stories always belong to uploader's organisation
+      try {
+        const acFormatted = (storyData.acceptanceCriteria || []).map((ac, idx) => ({
+          id: ac.id || `AC ${idx + 1}`,
+          scenario: typeof ac === "string" ? ac : ac.scenario || "",
+        }));
+
         const story = await Story.create({
           organisationId,
           projectId: projectId || null,
@@ -303,23 +392,20 @@ ${chunk}`;
           source: "document",
           sourceRef: savedDoc._id.toString(),
           sourceQuote: `From document: ${file.originalname}`,
-          acceptanceCriteria,
-          acceptanceCriteriaFormatted,
+          acceptanceCriteria: acFormatted.map((ac) => ac.scenario),
+          acceptanceCriteriaFormatted: acFormatted,
           releaseNotes: storyData.releaseNotes || "",
           sprint: storyData.sprint || "Backlog",
           isAIGenerated: true,
+          sequence: i + 1,
+          createdAt: new Date(Date.now() + (i * 100)),
         });
 
-        console.log(
-          "[document] Story AC count:",
-          storyData.acceptanceCriteria?.length,
-          "saved as:",
-          story.acceptanceCriteria?.length,
-        );
-
         createdStories.push(story);
-      } catch (storyErr) {
-        console.error("[document] Story create error:", storyErr.message);
+
+        console.log(`[document] Story ${i + 1}: ${story.storyTitle?.substring(0, 50)} | AC: ${acFormatted.length}`);
+      } catch (storyError) {
+        console.error("[document] Story create error:", storyError.message);
       }
     }
 

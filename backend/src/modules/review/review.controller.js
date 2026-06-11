@@ -96,7 +96,7 @@ export function toReviewStoryDto(doc) {
  *   1. Read organisationId from JWT (req.user) so users only see their org's data
  *   2. Find stories with status "pending-review"
  *   3. Populate clientId → attach client name + company to each story
- *   4. Sort newest first (createdAt descending)
+ *   4. Sort by document sequence then createdAt (Epic 1 → Epic 15)
  *   5. Return { stories: [...] } for ReviewQueuePage cards + stats for header bar
  */
 export async function getReviewQueue(req, res) {
@@ -112,7 +112,7 @@ export async function getReviewQueue(req, res) {
     const stories = await Story.find(filter)
       .populate("clientId", "name company")
       .populate("projectId", "name color")
-      .sort({ createdAt: -1 })
+      .sort({ sequence: 1, createdAt: 1 })
       .limit(100);
 
     console.log("[reviewQueue] found:", stories.length);

@@ -146,6 +146,11 @@ const storySchema = new mongoose.Schema({
     type: Date,
   },
 
+  // Document upload order — preserves epic sequence in Review Queue
+  sequence: {
+    type: Number,
+  },
+
   createdAt: {
     type: Date,
     default: Date.now,
