@@ -62,52 +62,29 @@ export const uploadDocument = async (req, res) => {
       });
     }
 
-    const maxChars = 10000;
-    const truncatedText =
-      documentText.length > maxChars
-        ? documentText.substring(0, maxChars) + "\n\n[Document truncated]"
-        : documentText;
+    // Limit input so output has room to fit within max_tokens
+    const inputText = documentText.length > 8000
+      ? documentText.substring(0, 8000)
+      : documentText;
 
-    const prompt = `You are a Business Analyst. Analyze this document and extract user stories.
+    const prompt = `IMPORTANT: Return raw JSON only. Do NOT wrap in markdown code blocks. Do NOT use \`\`\`json or \`\`\`. Start your response with { and end with }
 
-Return ONLY a JSON object in this exact format with no other text:
-{
-  "documentSummary": "brief summary here",
-  "documentTitle": "document title here",
-  "totalRequirements": 5,
-  "stories": [
-    {
-      "storyTitle": "Module > Feature Name",
-      "type": "Story",
-      "priority": "Medium",
-      "description": "As a user I need X So that Y",
-      "acceptanceCriteria": [
-        {"id": "AC 1", "scenario": "Given X When Y Then Z"},
-        {"id": "AC 2", "scenario": "Given X When Y Then Z"},
-        {"id": "AC 3", "scenario": "Given X When Y Then Z"}
-      ],
-      "releaseNotes": "We introduced X to solve Y",
-      "sprint": "Current"
-    }
-  ]
-}
+You are a Business Analyst. Analyze this document and extract the TOP 10 most important requirements only. Focus on core features. Keep each story concise. Total response must be under 4000 tokens.
 
-RULES:
-- Return ONLY the JSON object above
-- No markdown, no code blocks, no explanation
-- Extract every requirement as a separate story
-- Minimum 3 acceptance criteria per story
-- Use Given/When/Then format
+Return ONLY this JSON structure:
+{"documentSummary":"brief summary","documentTitle":"title","totalRequirements":5,"stories":[{"storyTitle":"Module > Feature","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X to solve Y","sprint":"Current"}]}
 
-Document: ${file.originalname}
+RULES: No markdown. No code blocks. No explanation. Raw JSON only. Minimum 3 ACs per story. Given/When/Then format.
+
+Document: ${file.originalname}${documentText.length > 8000 ? " (analyzing first section)" : ""}
 Content:
-${truncatedText.substring(0, 15000)}`;
+${inputText}`;
 
-    console.log("[document] Sending to Claude AI (haiku)...");
+    console.log("[document] Sending to Claude AI (haiku)... input chars:", inputText.length);
 
     const makeRequest = () => getClaudeClient().messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 3000,
+      max_tokens: 6000,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -125,40 +102,50 @@ ${truncatedText.substring(0, 15000)}`;
     }
 
     const responseText = aiResponse.content[0].text;
+    console.log("[document] Response length:", responseText.length);
     console.log("[document] Raw AI response (first 500):", responseText.substring(0, 500));
+
+    // Strip markdown fences if present
+    let cleanJson = responseText.trim();
+    if (cleanJson.startsWith("```")) {
+      const firstNewline = cleanJson.indexOf("\n");
+      cleanJson = cleanJson.substring(firstNewline + 1);
+    }
+    if (cleanJson.endsWith("```")) {
+      cleanJson = cleanJson.substring(0, cleanJson.lastIndexOf("```"));
+    }
+    cleanJson = cleanJson.trim();
+
+    const jsonStart = cleanJson.indexOf("{");
+    const jsonEnd = cleanJson.lastIndexOf("}");
+    if (jsonStart === -1 || jsonEnd === -1) {
+      console.error("[document] No JSON braces found. Full response:", responseText.substring(0, 1000));
+      return res.status(500).json({ success: false, message: "AI analysis failed — no JSON in response. Please try again." });
+    }
+    cleanJson = cleanJson.substring(jsonStart, jsonEnd + 1);
 
     let analysis;
     try {
-      const clean = responseText
-        .replace(/```json\s*/gi, "")
-        .replace(/```\s*/g, "")
-        .replace(/^\s*Here\s+is\s+.*?:\s*/i, "")
-        .replace(/^\s*I\s+have\s+.*?:\s*/i, "")
-        .trim();
-
-      const jsonStart = clean.indexOf("{");
-      const jsonEnd = clean.lastIndexOf("}");
-
-      if (jsonStart === -1 || jsonEnd === -1) {
-        throw new Error("No JSON object found in response");
-      }
-
-      const jsonStr = clean.substring(jsonStart, jsonEnd + 1);
-      analysis = JSON.parse(jsonStr);
-
+      analysis = JSON.parse(cleanJson);
       if (!analysis.stories || !Array.isArray(analysis.stories)) {
         throw new Error("No stories array in response");
       }
-
       console.log("[document] Parsed successfully:", analysis.stories.length, "stories");
-    } catch (parseError) {
-      console.error("[document] Parse error:", parseError.message);
-      console.error("[document] Full response:", responseText.substring(0, 1000));
-      return res.status(500).json({
-        success: false,
-        message: "AI analysis failed. Please try uploading again.",
-        debug: parseError.message,
-      });
+    } catch (e) {
+      console.error("[document] Parse failed:", e.message);
+      // Partial-parse fallback — try to salvage the stories array
+      try {
+        const match = cleanJson.match(/"stories"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+        if (match) {
+          analysis = { stories: JSON.parse(match[1]), documentSummary: "Document analyzed", totalRequirements: 0 };
+          console.log("[document] Used partial parse fallback:", analysis.stories.length, "stories");
+        } else {
+          throw new Error("Cannot extract stories from response");
+        }
+      } catch (e2) {
+        console.error("[document] Full response:", responseText.substring(0, 1000));
+        return res.status(500).json({ success: false, message: "AI JSON parse failed. Please try again.", debug: e.message });
+      }
     }
 
     console.log("[document] AI found", analysis.stories?.length, "stories");
