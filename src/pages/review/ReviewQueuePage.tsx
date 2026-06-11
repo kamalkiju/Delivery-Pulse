@@ -77,6 +77,24 @@ function parseStories(data: unknown): Story[] {
   return arr as Story[];
 }
 
+const getEpicNum = (title?: string): number => {
+  if (!title) return 999;
+  const epicMatch = title.match(/Epic\s+(\d+)/i);
+  if (epicMatch) return parseInt(epicMatch[1]);
+  if (title.includes("User Goals")) return 998;
+  if (title.includes("Product Vision")) return 0;
+  return 997;
+};
+
+function sortDocumentStories(stories: Story[]): Story[] {
+  return [...stories].sort((a, b) => {
+    const epicA = getEpicNum(a.storyTitle || a.title);
+    const epicB = getEpicNum(b.storyTitle || b.title);
+    if (epicA !== epicB) return epicA - epicB;
+    return (a.storyTitle || a.title || "").localeCompare(b.storyTitle || b.title || "");
+  });
+}
+
 // ── Colour maps ───────────────────────────────────────────────────────────────
 
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -152,7 +170,11 @@ const ReviewQueuePage = () => {
     try {
       // Fetch Document stories
       const docRes = await api.get(`/review?source=document${pp}`);
-      setDocumentStories(parseStories(docRes.data));
+      const d = docRes.data as Record<string, unknown>;
+      const docStories = (Array.isArray(d.data) ? d.data : null)
+        ?? (Array.isArray(d.stories) ? d.stories : null)
+        ?? [];
+      setDocumentStories(sortDocumentStories(docStories as Story[]));
     } catch {
       setDocumentStories([]);
     }

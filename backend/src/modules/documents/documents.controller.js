@@ -267,51 +267,69 @@ ${chunk}`;
     });
     console.log("[document] After dedup:", allStories.length, "stories");
 
-    console.log("[document] Starting post-processing validation...");
+    console.log("[document] Running post-processing...");
 
     allStories = allStories.map((story) => {
       if (!story.storyTitle?.includes(">")) {
-        story.storyTitle = story.storyTitle?.replace(/:\s+/, " > ") ||
-          `General > ${story.storyTitle}`;
+        story.storyTitle = story.storyTitle?.includes(":")
+          ? story.storyTitle.replace(/:\s*/, " > ")
+          : `General > ${story.storyTitle}`;
       }
 
       const desc = story.description || "";
-      const hasAsA = desc.toLowerCase().includes("as a");
+      const hasAsA = desc.toLowerCase().startsWith("as a") ||
+        desc.toLowerCase().includes(" as a ");
       const hasSoThat = desc.toLowerCase().includes("so that");
 
       if (!hasAsA || !hasSoThat) {
-        const featureName = story.storyTitle?.split(">")?.pop()?.trim() ||
-          "this feature";
+        const parts = (story.storyTitle || "").split(">");
+        const epic = parts[0]?.trim() || "user";
+        const feature = parts[1]?.trim() || "this feature";
 
         if (hasAsA && !hasSoThat) {
-          story.description = `${desc} So that the ${featureName.toLowerCase()} works correctly and meets business requirements`;
+          story.description = `${desc.trim()} So that the ${feature.toLowerCase()} requirement is fulfilled`;
+        } else if (!hasAsA && hasSoThat) {
+          story.description = `As a user I need ${feature.toLowerCase()} ${desc.toLowerCase().includes("so that") ? desc : `So that ${desc}`}`;
         } else {
-          story.description = `As a user I need ${featureName.toLowerCase()} So that I can complete my tasks efficiently and the business requirement is met`;
+          story.description = `As a ${epic.toLowerCase().replace(/epic\s+\d+:/i, "").trim() || "user"} I need ${feature.toLowerCase()} So that ${desc || "the business requirement is fulfilled"}`;
         }
       }
 
-      const acArray = story.acceptanceCriteria || [];
+      let acArray = story.acceptanceCriteria || [];
 
-      while (acArray.length < 3) {
-        const acNum = acArray.length + 1;
-        const feature = story.storyTitle?.split(">")?.pop()?.trim() || "feature";
+      if (!Array.isArray(acArray)) acArray = [];
 
-        if (acNum === 1) {
-          acArray.push({
+      const feature = (story.storyTitle || "").split(">").pop()?.trim() || "feature";
+
+      if (acArray.length === 0) {
+        acArray = [
+          {
             id: "AC 1",
-            scenario: `Given the user navigates to the ${feature.toLowerCase()} screen When the page loads Then all required elements are displayed correctly and the feature is accessible`,
-          });
-        } else if (acNum === 2) {
-          acArray.push({
+            scenario: `Given the user navigates to ${feature.toLowerCase()} When the page loads Then all required elements are displayed correctly`,
+          },
+          {
             id: "AC 2",
-            scenario: "Given the user performs the main action When the system processes the request Then the expected result is shown and data is saved correctly",
-          });
-        } else {
-          acArray.push({
-            id: `AC ${acNum}`,
-            scenario: "Given an error or edge case occurs When the user performs the action Then an appropriate error message is displayed and the user is guided to correct the issue",
-          });
-        }
+            scenario: "Given the user performs the main action When the system processes it Then the expected result is shown successfully",
+          },
+          {
+            id: "AC 3",
+            scenario: "Given an error occurs When the user performs the action Then an appropriate error message is displayed",
+          },
+        ];
+      } else if (acArray.length === 1) {
+        acArray.push({
+          id: "AC 2",
+          scenario: `Given the user performs the main action on ${feature.toLowerCase()} When the system processes the request Then the expected result is returned and displayed correctly`,
+        });
+        acArray.push({
+          id: "AC 3",
+          scenario: "Given an invalid input or error condition When the user submits the form Then the system displays a clear error message and guides the user",
+        });
+      } else if (acArray.length === 2) {
+        acArray.push({
+          id: "AC 3",
+          scenario: `Given an edge case or error condition for ${feature.toLowerCase()} When it occurs Then the system handles it gracefully and shows appropriate feedback`,
+        });
       }
 
       story.acceptanceCriteria = acArray.map((ac, i) => ({
@@ -322,15 +340,18 @@ ${chunk}`;
       return story;
     });
 
-    console.log("[document] Post-processing complete");
-    console.log("[document] Desc OK:",
-      allStories.filter((s) =>
-        s.description?.toLowerCase().includes("as a") &&
-        s.description?.toLowerCase().includes("so that"),
-      ).length + "/" + allStories.length);
-    console.log("[document] AC >= 3:",
-      allStories.filter((s) => s.acceptanceCriteria?.length >= 3).length +
-      "/" + allStories.length);
+    const descOK = allStories.filter((s) =>
+      s.description?.toLowerCase().includes("as a") &&
+      s.description?.toLowerCase().includes("so that"),
+    ).length;
+
+    const acOK = allStories.filter((s) =>
+      (s.acceptanceCriteria?.length || 0) >= 3,
+    ).length;
+
+    console.log("[document] Post-processing results:");
+    console.log(`[document] Desc OK: ${descOK}/${allStories.length}`);
+    console.log(`[document] AC >= 3: ${acOK}/${allStories.length}`);
 
     allStories.sort((a, b) => {
       const getEpicNum = (title) => {
