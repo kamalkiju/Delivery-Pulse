@@ -3,7 +3,10 @@ import multer from "multer";
 import { authMiddleware } from "../auth/auth.middleware.js";
 import { uploadDocument, getDocuments } from "./documents.controller.js";
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+});
 const router = express.Router();
 
 router.get("/", authMiddleware, getDocuments);

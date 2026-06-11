@@ -1,683 +1,317 @@
-// ─────────────────────────────────────────────
-// DocumentsPage — upload UAT / SOW / BRD files for AI extraction
-// Drag-and-drop zone, file history table, processing & error states
-// ─────────────────────────────────────────────
-
-import {
-  useRef,
-  useState,
-  type CSSProperties,
-  type DragEvent,
-  type ChangeEvent,
-} from "react";
-import { uploadDocument } from "../../api/documents.api";
-import {
-  CloudUpload,
-  FileSpreadsheet,
-  FileText,
-  FileType,
-  X,
-} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import AppShell from "../../components/layout/AppShell";
-import StatusBadge from "../../components/ui/StatusBadge";
-import {
-  borderRadius,
-  colors,
-  spacing,
-  typography,
-} from "../../styles/tokens";
+import api from "../../api/axios";
 
-// ── Types ────────────────────────────────────────────────────
-
-type FileKind = "excel" | "word" | "pdf";
-type FileRowStatus = "processed" | "processing";
-
-/** One row in the file history table */
-interface DocumentFile {
-  id: string;
-  name: string;
-  meta: string;
-  kind: FileKind;
-  typeLabel: string;
-  client: string;
-  uploaded: string;
-  status: FileRowStatus;
-  storiesCount?: number;
-  progress?: number;
-  progressLabel?: string;
+interface AnalysisResult {
+  success: boolean;
+  documentTitle?: string;
+  documentSummary?: string;
+  storiesCreated: number;
+  totalRequirements?: number;
+  stories?: { _id: string; storyTitle: string; type: string; priority: string }[];
 }
 
-const SUPPORTED_EXTENSIONS = [".docx", ".xlsx", ".pdf"];
+interface DocumentRecord {
+  _id: string;
+  originalName: string;
+  fileType: string;
+  fileSize: number;
+  storiesCreated: number;
+  status: string;
+  createdAt: string;
+}
 
-// ── Initial table data (4 rows from spec) ────────────────────
-
-const initialFiles: DocumentFile[] = [
-  {
-    id: "1",
-    name: "UAT_Testing_V2.xlsx",
-    meta: "47 rows · 3 sheets",
-    kind: "excel",
-    typeLabel: "Excel",
-    client: "TechCorp Ltd",
-    uploaded: "Today 2:15 PM",
-    status: "processed",
-    storiesCount: 14,
-  },
-  {
-    id: "2",
-    name: "Sprint14_BugReport.docx",
-    meta: "12 pages",
-    kind: "word",
-    typeLabel: "Word",
-    client: "GlobalRetail",
-    uploaded: "Today 10:30 AM",
-    status: "processed",
-    storiesCount: 8,
-  },
-  {
-    id: "3",
-    name: "SOW_PlatformV2.pdf",
-    meta: "23 pages",
-    kind: "pdf",
-    typeLabel: "PDF",
-    client: "StartupXYZ",
-    uploaded: "Just now",
-    status: "processing",
-    progress: 62,
-    progressLabel: "62% — Reading pages...",
-  },
-  {
-    id: "4",
-    name: "Q1_UAT_Report.xlsx",
-    meta: "31 rows · 2 sheets",
-    kind: "excel",
-    typeLabel: "Excel",
-    client: "FinanceApp",
-    uploaded: "Yesterday",
-    status: "processed",
-    storiesCount: 22,
-  },
+const STEPS = [
+  "Reading document...",
+  "Extracting text content...",
+  "Analyzing requirements with Claude AI...",
+  "Generating structured stories...",
+  "Saving to Review Queue...",
 ];
 
-// Table column widths — FILE column grows; others stay compact
-const TABLE_GRID =
-  "minmax(220px, 2fr) 72px minmax(100px, 1fr) minmax(100px, 1fr) minmax(140px, 1.2fr) 88px minmax(200px, 1.5fr)";
+const fileIcon = (type: string) =>
+  type === "pdf" ? "📕" : type === "docx" ? "📘" : type === "xlsx" ? "📗" : "📄";
 
-const DocumentsPage = () => {
-  // dragOver — true while user drags a file over the upload zone (tints bg blue)
-  const [dragOver, setDragOver] = useState(false);
-  // files — rows shown in the history table; can grow when valid files are dropped
-  const [files, setFiles] = useState<DocumentFile[]>(initialFiles);
-  // uploadError — set when unsupported type (e.g. .png); null when no error
-  const [uploadError, setUploadError] = useState<string | null>(null);
+const formatSize = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+export default function DocumentsPage() {
+  const [selectedFile, setSelectedFile]     = useState<File | null>(null);
+  const [isDragging, setIsDragging]         = useState(false);
+  const [isAnalyzing, setIsAnalyzing]       = useState(false);
+  const [stepIndex, setStepIndex]           = useState(0);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [error, setError]                   = useState<string | null>(null);
+  const [documents, setDocuments]           = useState<DocumentRecord[]>([]);
+  const fileInputRef                        = useRef<HTMLInputElement>(null);
 
-  // ── Drag-and-drop event handlers ───────────────────────────
-
-  /** onDragOver — browser default is to reject drops; we must preventDefault and set dragOver */
-  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setDragOver(true);
-  };
-
-  /** onDragLeave — reset highlight when pointer leaves the drop zone (not child elements) */
-  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const related = event.relatedTarget as Node | null;
-    if (!event.currentTarget.contains(related)) {
-      setDragOver(false);
+  const fetchDocuments = async () => {
+    try {
+      const res = await api.get("/documents");
+      setDocuments(res.data.documents ?? []);
+    } catch {
+      // silently ignore — list is optional
     }
   };
 
-  /** onDrop — read dropped files, validate extension, update state */
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setDragOver(false);
+  useEffect(() => { fetchDocuments(); }, []);
 
-    const dropped = event.dataTransfer.files[0];
-    if (!dropped) return;
-
-    processSelectedFile(dropped);
+  const validate = (file: File): string | null => {
+    const allowed = [".docx", ".pdf", ".xlsx", ".xls", ".txt", ".csv"];
+    const ext = "." + file.name.split(".").pop()?.toLowerCase();
+    if (!allowed.includes(ext)) return "Please upload a .docx, .pdf, .xlsx, or .txt file";
+    if (file.size > 10 * 1024 * 1024) return "File size must be under 10 MB";
+    return null;
   };
 
-  /** Shared logic for drop zone and hidden file input */
-  const processSelectedFile = (file: File) => {
-    const lowerName = file.name.toLowerCase();
+  const handleFileSelect = (file: File) => {
+    const err = validate(file);
+    if (err) { setError(err); return; }
+    setSelectedFile(file);
+    setError(null);
+    setAnalysisResult(null);
+  };
 
-    if (lowerName.endsWith(".png") || !isSupportedFile(lowerName)) {
-      setUploadError("wrong-type");
-      return;
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  };
+
+  const handleAnalyze = async () => {
+    if (!selectedFile) return;
+    setIsAnalyzing(true);
+    setError(null);
+    setAnalysisResult(null);
+    setStepIndex(0);
+
+    const iv = setInterval(() => setStepIndex((i) => Math.min(i + 1, STEPS.length - 1)), 3000);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const res = await api.post("/documents/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000,
+      });
+
+      if (res.data.success) {
+        setAnalysisResult(res.data);
+        fetchDocuments();
+      } else {
+        setError(res.data.message ?? "Analysis failed. Please try again.");
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setError(msg ?? "Failed to analyze document. Please try again.");
+    } finally {
+      clearInterval(iv);
+      setIsAnalyzing(false);
     }
-
-    setUploadError(null);
-
-    uploadDocument(file, "techcorp").catch(() => {
-      /* offline dev — table row still shown from local state */
-    });
-
-    const kind = getKindFromName(lowerName);
-    const newRow: DocumentFile = {
-      id: `upload-${Date.now()}`,
-      name: file.name,
-      meta: formatFileSize(file.size),
-      kind,
-      typeLabel: kind === "excel" ? "Excel" : kind === "word" ? "Word" : "PDF",
-      client: "—",
-      uploaded: "Just now",
-      status: "processing",
-      progress: 12,
-      progressLabel: "12% — Uploading...",
-    };
-    setFiles((prev) => [newRow, ...prev]);
-  };
-
-  /** Browse Files — opens native file picker via hidden <input type="file"> */
-  const handleBrowseClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  /** onChange on hidden input — same validation as drop */
-  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const picked = event.target.files?.[0];
-    if (picked) processSelectedFile(picked);
-    event.target.value = "";
-  };
-
-  /** Try Again — clears error so user can upload again */
-  const handleTryAgain = () => {
-    setUploadError(null);
-  };
-
-  /** Cancel — removes in-progress row (row 3 demo) */
-  const handleCancelProcessing = (id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
   return (
     <AppShell pageTitle="Documents">
-      {/* ── PAGE HEADER ───────────────────────────────────── */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: spacing[4],
-          marginBottom: spacing[6],
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              margin: `0 0 ${spacing[2]} 0`,
-              fontSize: typography.titleXl.size,
-              fontWeight: 700,
-              color: colors["text-primary"],
-            }}
-          >
-            Document Processing
+      <div style={{ maxWidth: 860, margin: "0 auto" }}>
+
+        {/* Header */}
+        <div style={{ marginBottom: 28 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#1e293b", margin: 0 }}>
+            Document Analysis
           </h1>
-          <p
-            style={{
-              margin: 0,
-              fontSize: typography.bodySm.size,
-              fontWeight: typography.bodySm.weight,
-              color: colors["text-secondary"],
-              maxWidth: "520px",
-            }}
-          >
-            Upload client UAT reports, SOW, BRD — AI extracts all requirements
-            automatically
+          <p style={{ fontSize: 14, color: "#64748b", margin: "6px 0 0" }}>
+            Upload PRD, UAT, or requirement documents — AI analyzes and creates ADO stories automatically
           </p>
         </div>
-        <button type="button" style={btnGhost}>
-          Upload History
-        </button>
-      </header>
 
-      {/* ── UPLOAD ZONE ───────────────────────────────────── */}
-      <div
-        role="region"
-        aria-label="Document upload"
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        style={{
-          width: "100%",
-          marginBottom: spacing[6],
-          padding: spacing[12],
-          textAlign: "center",
-          border: `2px dashed ${colors["border-light"]}`,
-          borderRadius: borderRadius["2xl"],
-          backgroundColor: dragOver
-            ? colors["surface-blue-tint"]
-            : colors["surface-subtle"],
-          transition: "background-color 0.15s ease",
-          boxSizing: "border-box",
-        }}
-      >
-        <CloudUpload
-          size={48}
-          color={colors["brand-blue"]}
-          style={{ margin: "0 auto 16px" }}
-        />
-        <p
-          style={{
-            margin: `0 0 ${spacing[2]} 0`,
-            fontSize: typography.titleMd.size,
-            fontWeight: 700,
-            color: colors["text-primary"],
-          }}
-        >
-          Drop your document here
-        </p>
-        <p
-          style={{
-            margin: `0 0 ${spacing[4]} 0`,
-            fontSize: typography.bodySm.size,
-            color: colors["text-tertiary"],
-          }}
-        >
-          or
-        </p>
-        <button type="button" onClick={handleBrowseClick} style={btnBrowse}>
-          Browse Files
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".docx,.xlsx,.pdf"
-          style={{ display: "none" }}
-          onChange={handleFileInputChange}
-        />
-        <p
-          style={{
-            margin: `${spacing[4]} 0 ${spacing[4]} 0`,
-            fontSize: typography.captionSm.size,
-            color: colors["text-tertiary"],
-          }}
-        >
-          Supports .docx · .xlsx · .pdf — Max 50MB
-        </p>
-        <div style={tipBox}>
-          <strong style={{ fontWeight: 600 }}>Tip:</strong> Upload your full UAT
-          spreadsheet — AI reads every row and creates ADO stories
-        </div>
-      </div>
-
-      {/* ── ERROR STATE (below upload zone when .png etc.) ─── */}
-      {uploadError === "wrong-type" && (
+        {/* Drop zone */}
         <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => !selectedFile && fileInputRef.current?.click()}
           style={{
-            marginBottom: spacing[6],
-            padding: spacing[12],
+            border: `2px dashed ${isDragging ? "#0088ff" : selectedFile ? "#16a34a" : "#cbd5e1"}`,
+            borderRadius: 16,
+            padding: 48,
             textAlign: "center",
-            border: `2px solid ${colors.danger}`,
-            borderRadius: borderRadius["2xl"],
-            backgroundColor: "#fff5f5",
+            backgroundColor: isDragging ? "#eff6ff" : selectedFile ? "#f0fdf4" : "#f8fafc",
+            cursor: selectedFile ? "default" : "pointer",
+            transition: "all 0.2s",
+            marginBottom: 20,
           }}
         >
-          <X
-            size={40}
-            color={colors.danger}
-            style={{ margin: "0 auto 12px" }}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".docx,.pdf,.xlsx,.xls,.txt,.csv"
+            style={{ display: "none" }}
+            onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
           />
-          <p
-            style={{
-              margin: `0 0 ${spacing[2]} 0`,
-              fontSize: typography.titleMd.size,
-              fontWeight: 700,
-              color: colors.danger,
-            }}
+
+          {!selectedFile ? (
+            <>
+              <div style={{ fontSize: 48, marginBottom: 14 }}>📄</div>
+              <p style={{ fontSize: 18, fontWeight: 600, color: "#1e293b", margin: "0 0 6px" }}>
+                Drop your document here
+              </p>
+              <p style={{ fontSize: 14, color: "#64748b", margin: "0 0 16px" }}>
+                or click to browse
+              </p>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                {[".docx", ".pdf", ".xlsx", ".txt"].map((ext) => (
+                  <span key={ext} style={{ backgroundColor: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 10px", fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+                    {ext}
+                  </span>
+                ))}
+              </div>
+              <p style={{ fontSize: 12, color: "#94a3b8", margin: "12px 0 0" }}>Max 10 MB</p>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
+              <p style={{ fontSize: 16, fontWeight: 600, color: "#16a34a", margin: "0 0 4px" }}>
+                {selectedFile.name}
+              </p>
+              <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 16px" }}>
+                {formatSize(selectedFile.size)}
+              </p>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setSelectedFile(null); setAnalysisResult(null); setError(null); }}
+                style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontSize: 13, color: "#64748b" }}
+              >
+                Remove file
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{ backgroundColor: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "12px 16px", marginBottom: 16, color: "#dc2626", fontSize: 14 }}>
+            ⚠️ {error}
+          </div>
+        )}
+
+        {/* Analyze button */}
+        {selectedFile && !isAnalyzing && !analysisResult && (
+          <button
+            type="button"
+            onClick={handleAnalyze}
+            style={{ width: "100%", backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontSize: 16, fontWeight: 600, cursor: "pointer", marginBottom: 24 }}
           >
-            File type not supported
-          </p>
-          <p
-            style={{
-              margin: `0 0 ${spacing[5]} 0`,
-              fontSize: typography.bodySm.size,
-              color: colors["text-secondary"],
-            }}
-          >
-            .png files cannot be processed · Supported: .docx · .xlsx · .pdf
-          </p>
-          <button type="button" onClick={handleTryAgain} style={btnBrowse}>
-            Try Again
+            🤖 Analyze Document with AI
           </button>
-        </div>
-      )}
+        )}
 
-      {/* ── FILE TABLE ────────────────────────────────────── */}
-      <div
-        style={{
-          backgroundColor: colors["surface-card"],
-          border: `1px solid ${colors["border-default"]}`,
-          borderRadius: borderRadius.md,
-          overflow: "hidden",
-        }}
-      >
-        {/* Table header */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: TABLE_GRID,
-            alignItems: "center",
-            padding: "10px 16px",
-            backgroundColor: colors["surface-subtle"],
-            borderBottom: `1px solid ${colors["border-default"]}`,
-          }}
-        >
-          {[
-            "FILE",
-            "TYPE",
-            "CLIENT",
-            "UPLOADED",
-            "STATUS",
-            "STORIES",
-            "ACTIONS",
-          ].map((col) => (
-            <span key={col} style={tableHeaderCell}>
-              {col}
-            </span>
-          ))}
-        </div>
+        {/* Loading */}
+        {isAnalyzing && (
+          <div style={{ backgroundColor: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 32, textAlign: "center", marginBottom: 24 }}>
+            <div style={{ fontSize: 40, marginBottom: 14 }}>⚙️</div>
+            <p style={{ fontSize: 16, fontWeight: 600, color: "#1e293b", margin: "0 0 6px" }}>Analyzing document…</p>
+            <p style={{ fontSize: 14, color: "#0088ff", margin: "0 0 20px" }}>{STEPS[stepIndex]}</p>
+            <div style={{ height: 4, backgroundColor: "#f1f5f9", borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ height: 4, backgroundColor: "#0088ff", borderRadius: 999, width: `${((stepIndex + 1) / STEPS.length) * 100}%`, transition: "width 0.5s ease" }} />
+            </div>
+            <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 12 }}>
+              This may take 30–60 seconds for large documents
+            </p>
+          </div>
+        )}
 
-        {/* Table body — one row per file in `files` state */}
-        {files.map((file) => (
-          <FileTableRow
-            key={file.id}
-            file={file}
-            onCancel={() => handleCancelProcessing(file.id)}
-          />
-        ))}
+        {/* Result */}
+        {analysisResult && (
+          <div style={{ backgroundColor: "#f0fdf4", border: "1px solid #86efac", borderRadius: 12, padding: 24, marginBottom: 28 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <span style={{ fontSize: 32 }}>🎉</span>
+              <div>
+                <p style={{ fontSize: 18, fontWeight: 700, color: "#16a34a", margin: 0 }}>Analysis Complete!</p>
+                <p style={{ fontSize: 14, color: "#166534", margin: "2px 0 0" }}>
+                  {analysisResult.storiesCreated} stories created from {selectedFile?.name}
+                </p>
+              </div>
+            </div>
+
+            {analysisResult.documentSummary && (
+              <div style={{ backgroundColor: "#fff", borderRadius: 8, padding: 14, marginBottom: 14, fontSize: 14, color: "#374151", lineHeight: 1.6 }}>
+                <strong>Summary:</strong> {analysisResult.documentSummary}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+              {[
+                { label: "Stories Created", value: analysisResult.storiesCreated, color: "#0088ff" },
+                { label: "Bugs Found",      value: analysisResult.stories?.filter((s) => s.type === "Bug").length ?? 0,     color: "#dc2626" },
+                { label: "Features",        value: analysisResult.stories?.filter((s) => s.type === "Feature").length ?? 0, color: "#7c3aed" },
+              ].map(({ label, value, color }) => (
+                <div key={label} style={{ backgroundColor: "#fff", borderRadius: 8, padding: "12px 16px", textAlign: "center", flex: 1 }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color }}>{value}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {analysisResult.stories && analysisResult.stories.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Stories created:</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 220, overflowY: "auto" }}>
+                  {analysisResult.stories.map((s, i) => (
+                    <div key={i} style={{ backgroundColor: "#fff", borderRadius: 6, padding: "7px 12px", fontSize: 13, color: "#374151", display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ backgroundColor: s.type === "Bug" ? "#fef2f2" : "#eff6ff", color: s.type === "Bug" ? "#dc2626" : "#2563eb", padding: "1px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600, flexShrink: 0 }}>
+                        {s.type}
+                      </span>
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.storyTitle}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => { window.location.href = "/review"; }}
+              style={{ width: "100%", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+            >
+              View Stories in Review Queue →
+            </button>
+          </div>
+        )}
+
+        {/* Previously analyzed documents */}
+        {documents.length > 0 && (
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: "#1e293b", marginBottom: 14 }}>
+              Previously Analyzed Documents
+            </h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {documents.map((doc) => (
+                <div key={doc._id} style={{ backgroundColor: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 24 }}>{fileIcon(doc.fileType)}</span>
+                    <div>
+                      <p style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", margin: 0 }}>{doc.originalName}</p>
+                      <p style={{ fontSize: 12, color: "#64748b", margin: "2px 0 0" }}>
+                        {new Date(doc.createdAt).toLocaleDateString()} · {formatSize(doc.fileSize)}
+                      </p>
+                    </div>
+                  </div>
+                  <span style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, flexShrink: 0 }}>
+                    ✅ {doc.storiesCreated} stories
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   );
-};
-
-// ── File table row ─────────────────────────────────────────────
-
-function FileTableRow({
-  file,
-  onCancel,
-}: {
-  file: DocumentFile;
-  onCancel: () => void;
-}) {
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: TABLE_GRID,
-        alignItems: "center",
-        minHeight: "56px",
-        padding: "8px 16px",
-        borderBottom: `1px solid ${colors["border-default"]}`,
-        gap: spacing[2],
-      }}
-    >
-      {/* FILE — icon + name + meta */}
-      <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
-        <FileKindIcon kind={file.kind} />
-        <div>
-          <div
-            style={{
-              fontSize: typography.bodySm.size,
-              fontWeight: 600,
-              color: colors["text-primary"],
-            }}
-          >
-            {file.name}
-          </div>
-          <div
-            style={{
-              fontSize: typography.captionSm.size,
-              color: colors["text-tertiary"],
-            }}
-          >
-            {file.meta}
-          </div>
-        </div>
-      </div>
-
-      {/* TYPE */}
-      <span style={typeBadge}>{file.typeLabel}</span>
-
-      {/* CLIENT */}
-      <span style={cellText}>{file.client}</span>
-
-      {/* UPLOADED */}
-      <span style={cellText}>{file.uploaded}</span>
-
-      {/* STATUS */}
-      <div>
-        {file.status === "processed" && (
-          <StatusBadge variant="healthy" label="Processed" />
-        )}
-        {file.status === "processing" && (
-          <div>
-            <div
-              style={{
-                width: "120px",
-                height: "4px",
-                backgroundColor: colors["border-default"],
-                borderRadius: borderRadius.full,
-                overflow: "hidden",
-                marginBottom: spacing[1],
-              }}
-            >
-              <div
-                className="doc-progress-fill"
-                style={{
-                  width: `${file.progress ?? 0}%`,
-                  height: "100%",
-                  backgroundColor: colors["brand-blue"],
-                  borderRadius: borderRadius.full,
-                }}
-              />
-            </div>
-            <span
-              style={{
-                fontSize: typography.captionSm.size,
-                color: colors.warning,
-              }}
-            >
-              {file.progressLabel}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* STORIES */}
-      <div>
-        {file.storiesCount != null ? (
-          <button type="button" style={storiesLink}>
-            {file.storiesCount} stories
-          </button>
-        ) : (
-          <span style={{ color: colors["text-tertiary"], fontSize: typography.captionSm.size }}>
-            —
-          </span>
-        )}
-      </div>
-
-      {/* ACTIONS */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: spacing[2],
-          alignItems: "center",
-        }}
-      >
-        {file.status === "processed" && (
-          <>
-            <button type="button" style={btnOutlineBlue}>
-              View Stories
-            </button>
-            {file.id === "1" && (
-              <button type="button" style={btnGhostSm}>
-                Re-process
-              </button>
-            )}
-          </>
-        )}
-        {file.status === "processing" && (
-          <button type="button" onClick={onCancel} style={btnGhostSm}>
-            Cancel
-          </button>
-        )}
-      </div>
-    </div>
-  );
 }
-
-// ── File kind icon (colored square + Lucide icon) ─────────────
-
-function FileKindIcon({ kind }: { kind: FileKind }) {
-  const config = {
-    excel: {
-      bg: colors["success-bg"],
-      color: colors["success-dark"],
-      Icon: FileSpreadsheet,
-    },
-    word: {
-      bg: colors["info-bg"],
-      color: colors.info,
-      Icon: FileText,
-    },
-    pdf: {
-      bg: colors["danger-bg"],
-      color: colors.danger,
-      Icon: FileType,
-    },
-  }[kind];
-
-  const { bg, color, Icon } = config;
-
-  return (
-    <div
-      style={{
-        width: 36,
-        height: 36,
-        borderRadius: borderRadius.md,
-        backgroundColor: bg,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-      }}
-    >
-      <Icon size={20} color={color} />
-    </div>
-  );
-}
-
-// ── Helpers ──────────────────────────────────────────────────
-
-function isSupportedFile(name: string): boolean {
-  return SUPPORTED_EXTENSIONS.some((ext) => name.endsWith(ext));
-}
-
-function getKindFromName(name: string): FileKind {
-  if (name.endsWith(".xlsx")) return "excel";
-  if (name.endsWith(".docx")) return "word";
-  return "pdf";
-}
-
-function formatFileSize(bytes: number): string {
-  const mb = bytes / (1024 * 1024);
-  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
-}
-
-// ── Shared styles ────────────────────────────────────────────
-
-const tableHeaderCell: CSSProperties = {
-  fontSize: typography.tableHeader.size,
-  fontWeight: typography.tableHeader.weight,
-  color: colors["text-tertiary"],
-  textTransform: "uppercase",
-};
-
-const cellText: CSSProperties = {
-  fontSize: typography.bodySm.size,
-  color: colors["text-primary"],
-};
-
-const typeBadge: CSSProperties = {
-  display: "inline-block",
-  fontSize: typography.captionSm.size,
-  fontWeight: 500,
-  padding: "2px 8px",
-  borderRadius: borderRadius.sm,
-  backgroundColor: colors.canvas,
-  color: colors["text-secondary"],
-};
-
-const btnGhost: CSSProperties = {
-  padding: `${spacing[2]} ${spacing[4]}`,
-  backgroundColor: "transparent",
-  border: `1px solid ${colors["border-default"]}`,
-  borderRadius: borderRadius.md,
-  fontSize: typography.bodySm.size,
-  fontWeight: 500,
-  color: colors["text-secondary"],
-  cursor: "pointer",
-};
-
-const btnGhostSm: CSSProperties = {
-  ...btnGhost,
-  padding: `${spacing[1]} ${spacing[3]}`,
-  fontSize: typography.captionSm.size,
-};
-
-const btnBrowse: CSSProperties = {
-  height: "44px",
-  padding: `0 ${spacing[6]}`,
-  backgroundColor: colors["brand-blue"],
-  color: colors["text-on-dark"],
-  border: "none",
-  borderRadius: borderRadius.md,
-  fontSize: typography.bodySm.size,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const btnOutlineBlue: CSSProperties = {
-  padding: `${spacing[1]} ${spacing[3]}`,
-  backgroundColor: "transparent",
-  border: `1px solid ${colors.info}`,
-  borderRadius: borderRadius.md,
-  fontSize: typography.captionSm.size,
-  fontWeight: 600,
-  color: colors.info,
-  cursor: "pointer",
-};
-
-const storiesLink: CSSProperties = {
-  border: "none",
-  background: "none",
-  padding: 0,
-  fontSize: typography.captionSm.size,
-  fontWeight: 600,
-  color: colors.info,
-  cursor: "pointer",
-  textDecoration: "underline",
-};
-
-const tipBox: CSSProperties = {
-  display: "inline-block",
-  maxWidth: "480px",
-  backgroundColor: colors["surface-blue-tint"],
-  borderRadius: borderRadius.md,
-  padding: "10px",
-  fontSize: typography.captionSm.size,
-  color: colors["text-secondary"],
-  textAlign: "left",
-};
-
-export default DocumentsPage;
