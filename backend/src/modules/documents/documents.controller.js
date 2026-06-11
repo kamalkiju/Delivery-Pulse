@@ -31,6 +31,30 @@ function parseChunkResponse(text) {
   }
 }
 
+const fixStoryTitle = (title, structure) => {
+  if (!title) return "General > Feature";
+
+  if (title.includes(">")) return title;
+
+  if (structure?.epics) {
+    const titleLower = title.toLowerCase();
+    for (const epic of structure.epics) {
+      const epicNameLower = epic.name.toLowerCase();
+      const epicWords = epicNameLower.split(" ").filter((w) => w.length > 3);
+
+      if (epicWords.some((word) => titleLower.includes(word))) {
+        return `${epic.name} > ${title}`;
+      }
+    }
+  }
+
+  if (title.includes(":")) {
+    return title.replace(/:\s*/, " > ");
+  }
+
+  return `General > ${title}`;
+};
+
 export const uploadDocument = async (req, res) => {
   try {
     const { projectId, clientId } = req.body;
@@ -112,71 +136,119 @@ export const uploadDocument = async (req, res) => {
     let allStories = [];
     let documentSummary = "";
     let documentTitle = file.originalname;
+    let documentStructure = null;
 
-    // ── Process each chunk ────────────────────────────────────────────────────
-    for (let idx = 0; idx < chunks.length; idx++) {
-      const chunk = chunks[idx];
-      const isFirst = idx === 0;
-      const isLast = idx === chunks.length - 1;
+    // ── Step 1: Detect document structure ─────────────────────────────────────
+    const structurePrompt = `Analyze this document and identify its structure.
+Return ONLY this JSON:
+{
+  "documentTitle": "title of document",
+  "documentSummary": "2-3 sentence summary",
+  "epics": [
+    {
+      "number": 1,
+      "name": "Epic name from document",
+      "description": "what this epic covers"
+    }
+  ],
+  "totalEstimatedStories": 10
+}
 
-      console.log(`[document] Processing chunk ${idx + 1}/${chunks.length}`);
+If document does not use epic structure use sections or modules instead.
+If no clear structure found create logical groupings.
 
-      const prompt = `Extract user stories from this document section as JSON.
+Document (first 5000 chars):
+${documentText.substring(0, 5000)}`;
 
-The document uses Epics as main categories.
-Each Epic contains multiple user stories.
-Create one story per user story found.
+    try {
+      const structureResponse = await claude.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 2000,
+        messages: [{ role: "user", content: structurePrompt }],
+      });
 
-Look for patterns like:
-- 'As a user I want...'
-- 'As a [role] I need...'
-- 'As a [role] I want...'
-Each of these is a separate story.
+      const structureText = structureResponse.content[0].text;
+      const cleanStructure = structureText
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
 
-Count every 'As a' statement as one story.
-Do not combine multiple As-a statements into one story.
+      const jsonStart = cleanStructure.indexOf("{");
+      const jsonEnd = cleanStructure.lastIndexOf("}");
 
-CRITICAL TITLE RULE:
-Story title MUST always contain > separator.
-Format: 'Epic Name > Feature Name'
-For Product Vision or general requirements use:
-'Product Vision > [Feature Name]'
-NOT 'Product Vision: [Feature Name]'
-Always use > as separator not : or -
+      if (jsonStart !== -1 && jsonEnd !== -1) {
+        documentStructure = JSON.parse(cleanStructure.substring(jsonStart, jsonEnd + 1));
+        console.log("[document] Structure detected:",
+          documentStructure.epics?.length, "sections");
+        console.log("[document] Epics:",
+          documentStructure.epics?.map((e) => e.name).join(", "));
 
-CRITICAL DESCRIPTION RULE:
-Every description MUST follow EXACTLY this format:
-'As a [specific user role] I need [specific feature/capability] So that [specific business value/outcome]'
+        if (documentStructure.documentTitle) {
+          documentTitle = documentStructure.documentTitle;
+        }
+        if (documentStructure.documentSummary) {
+          documentSummary = documentStructure.documentSummary;
+        }
+      }
+    } catch (structureError) {
+      console.log("[document] Structure detection failed, using generic approach:",
+        structureError.message);
+    }
 
-NEVER write description as:
-- 'The system should...'
-- 'Users can...'
-- 'This feature...'
-- 'Implement...'
+    const epicsContext = documentStructure?.epics
+      ? `Document structure has these sections:
+${documentStructure.epics.map((e) => `- ${e.name}: ${e.description}`).join("\n")}`
+      : "Use the document headings as epic/section names.";
 
-ALWAYS start with 'As a' and include 'So that'
-If you cannot identify user role use 'As a user'
-If you cannot identify value use 'So that the experience is improved'
+    // ── Step 2: Process each chunk with structure context ─────────────────────
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const chunk = chunks[chunkIndex];
+      const isLast = chunkIndex === chunks.length - 1;
 
-CRITICAL AC RULE:
-Every story MUST have EXACTLY 3 acceptance criteria minimum.
-Never create a story with 1 or 2 AC.
+      console.log(`[document] Processing chunk ${chunkIndex + 1}/${chunks.length}`);
 
-If you can only think of 2 AC add a third covering:
-  - Error scenario: Given [error] When [action] Then [error shown]
-  - OR Edge case: Given [edge case] When [action] Then [result]
-  - OR Validation: Given [invalid input] When [submitted] Then [validation shown]
+      const prompt = `You are a senior Business Analyst.
+Extract ALL user stories from this document section.
 
-If you can only think of 1 AC add two more covering:
-  - Happy path variant
-  - Error scenario
+${epicsContext}
 
-Return ONLY this JSON structure, nothing else:
-{"stories":[{"storyTitle":"User Access > Login with Email","type":"Story","priority":"Medium","description":"As a registered user I need to log in with email So that I can access my account securely","acceptanceCriteria":[{"id":"AC 1","scenario":"Given valid credentials When user logs in Then access is granted"},{"id":"AC 2","scenario":"Given invalid password When user logs in Then error message is shown"},{"id":"AC 3","scenario":"Given empty fields When user submits Then validation is shown"}],"releaseNotes":"We introduced login","sprint":"Current"}]}
+STRICT RULES:
+1. storyTitle format: "[Section/Epic Name] > [Feature Name]"
+   Use the ACTUAL section names from the document
+   NOT generic names
 
-Extract every requirement. Return raw JSON only.
+2. description MUST start with "As a" and include "So that"
+   Format: "As a [user role] I need [feature] So that [value]"
 
-Section ${idx + 1}/${chunks.length}:
+3. Every story needs MINIMUM 3 acceptance criteria
+   Format: "Given [context] When [action] Then [result]"
+
+4. Extract EVERY requirement as separate story
+   Count every "As a user" or feature description
+
+5. If document has no clear user stories
+   Convert every requirement into user story format
+
+Return ONLY raw JSON - no markdown:
+{
+  "stories": [
+    {
+      "storyTitle": "Section Name > Feature Name",
+      "type": "Story or Bug or Feature or Task",
+      "priority": "Critical or High or Medium or Low",
+      "description": "As a [role] I need [what] So that [value]",
+      "acceptanceCriteria": [
+        {"id": "AC 1", "scenario": "Given X When Y Then Z"},
+        {"id": "AC 2", "scenario": "Given X When Y Then Z"},
+        {"id": "AC 3", "scenario": "Given X When Y Then Z"}
+      ],
+      "releaseNotes": "We introduced [feature] to [solve problem]",
+      "sprint": "Current or Next or Backlog"
+    }
+  ]
+}
+
+Document section ${chunkIndex + 1} of ${chunks.length}:
 ${chunk}`;
 
       let attempt = 0;
@@ -188,71 +260,29 @@ ${chunk}`;
             messages: [{ role: "user", content: prompt }],
           });
 
-          const responseText = response.content[0].text;
-          console.log(`[document] Chunk ${idx + 1} response length:`, responseText.length);
-          console.log(`[document] Chunk ${idx + 1} first 300 chars:`, responseText.substring(0, 300));
-          console.log(`[document] Chunk ${idx + 1} last 100 chars:`, responseText.substring(responseText.length - 100));
-
-          // Strip markdown fences
-          let cleanJson = responseText.trim()
-            .replace(/^```json\s*/i, "")
-            .replace(/^```\s*/i, "")
-            .replace(/\s*```$/i, "")
-            .trim();
-
-          console.log(`[document] Clean json starts with:`, cleanJson.substring(0, 50));
-
-          const jsonStart = cleanJson.indexOf("{");
-          const jsonEnd = cleanJson.lastIndexOf("}");
-          console.log(`[document] jsonStart: ${jsonStart}, jsonEnd: ${jsonEnd}`);
-
-          if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
-            console.log(`[document] Chunk ${idx + 1} — no valid JSON brackets found`);
-            break;
-          }
-
-          const jsonStr = cleanJson.substring(jsonStart, jsonEnd + 1);
-          console.log(`[document] Extracted JSON length:`, jsonStr.length);
-
-          let chunkAnalysis;
-          try {
-            chunkAnalysis = JSON.parse(jsonStr);
-            console.log(`[document] Parse success, stories:`, chunkAnalysis.stories?.length);
-          } catch (parseErr) {
-            console.error(`[document] Parse error:`, parseErr.message);
-            const errPos = parseInt(parseErr.message.match(/\d+/)?.[0] || "0");
-            console.error(`[document] JSON near error:`, jsonStr.substring(Math.max(0, errPos - 50), errPos + 50));
-            break;
-          }
+          const chunkAnalysis = parseChunkResponse(response.content[0].text);
 
           if (!chunkAnalysis?.stories?.length) {
-            console.log(`[document] Chunk ${idx + 1} — parsed but no stories found`);
-            console.log(`[document] Keys in response:`, Object.keys(chunkAnalysis || {}));
+            console.log(`[document] Chunk ${chunkIndex + 1} — no stories found`);
             break;
           }
 
           allStories = allStories.concat(chunkAnalysis.stories);
-          console.log(`[document] Chunk ${idx + 1} → ${chunkAnalysis.stories.length} stories. Total: ${allStories.length}`);
-
-          if (isFirst && chunkAnalysis.documentSummary) {
-            documentSummary = chunkAnalysis.documentSummary;
-            documentTitle = chunkAnalysis.documentTitle || documentTitle;
-          }
-          break; // success — move to next chunk
+          console.log(`[document] Chunk ${chunkIndex + 1} → ${chunkAnalysis.stories.length} stories. Total: ${allStories.length}`);
+          break;
 
         } catch (err) {
           if (err.status === 429) {
-            console.log(`[document] Rate limit on chunk ${idx + 1} — waiting 30s...`);
+            console.log(`[document] Rate limit on chunk ${chunkIndex + 1} — waiting 30s...`);
             await sleep(30000);
             attempt++;
           } else {
-            console.error(`[document] Chunk ${idx + 1} error:`, err.message);
+            console.error(`[document] Chunk ${chunkIndex + 1} error:`, err.message);
             break;
           }
         }
       }
 
-      // Polite delay between chunks to avoid rate limits
       if (!isLast) await sleep(2000);
     }
 
@@ -271,9 +301,8 @@ ${chunk}`;
 
     allStories = allStories.map((story) => {
       if (!story.storyTitle?.includes(">")) {
-        story.storyTitle = story.storyTitle?.includes(":")
-          ? story.storyTitle.replace(/:\s*/, " > ")
-          : `General > ${story.storyTitle}`;
+        story.storyTitle = fixStoryTitle(story.storyTitle, documentStructure);
+        story.title = story.storyTitle;
       }
 
       const desc = story.description || "";
@@ -354,18 +383,24 @@ ${chunk}`;
     console.log(`[document] AC >= 3: ${acOK}/${allStories.length}`);
 
     allStories.sort((a, b) => {
-      const getEpicNum = (title) => {
+      const getOrder = (title) => {
         const epicMatch = title?.match(/Epic\s+(\d+)/i);
         if (epicMatch) return parseInt(epicMatch[1]);
-        if (title?.includes("User Goals")) return 0;
-        if (title?.includes("Product Vision")) return 0;
+
+        if (documentStructure?.epics) {
+          const epicIndex = documentStructure.epics.findIndex((e) =>
+            title?.toLowerCase().includes(e.name.toLowerCase().split(" ")[0]),
+          );
+          if (epicIndex !== -1) return epicIndex;
+        }
+
         return 999;
       };
 
-      const epicA = getEpicNum(a.storyTitle);
-      const epicB = getEpicNum(b.storyTitle);
+      const orderA = getOrder(a.storyTitle);
+      const orderB = getOrder(b.storyTitle);
 
-      if (epicA !== epicB) return epicA - epicB;
+      if (orderA !== orderB) return orderA - orderB;
 
       return (a.storyTitle || "").localeCompare(b.storyTitle || "");
     });

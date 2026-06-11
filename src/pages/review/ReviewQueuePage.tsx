@@ -37,6 +37,7 @@ interface Story {
   projectId?: { name: string; color?: string } | null;
   isAIGenerated?: boolean;
   regressionWarning?: string;
+  sequence?: number;
 }
 
 interface EditForm {
@@ -77,21 +78,19 @@ function parseStories(data: unknown): Story[] {
   return arr as Story[];
 }
 
-const getEpicNum = (title?: string): number => {
-  if (!title) return 999;
-  const epicMatch = title.match(/Epic\s+(\d+)/i);
-  if (epicMatch) return parseInt(epicMatch[1]);
-  if (title.includes("User Goals")) return 998;
-  if (title.includes("Product Vision")) return 0;
-  return 997;
-};
-
 function sortDocumentStories(stories: Story[]): Story[] {
   return [...stories].sort((a, b) => {
-    const epicA = getEpicNum(a.storyTitle || a.title);
-    const epicB = getEpicNum(b.storyTitle || b.title);
-    if (epicA !== epicB) return epicA - epicB;
-    return (a.storyTitle || a.title || "").localeCompare(b.storyTitle || b.title || "");
+    if (a.sequence != null && b.sequence != null) return a.sequence - b.sequence;
+    if (a.sequence != null) return -1;
+    if (b.sequence != null) return 1;
+
+    const titleA = a.storyTitle || a.title || "";
+    const titleB = b.storyTitle || b.title || "";
+    const epicA = titleA.match(/Epic\s+(\d+)/i);
+    const epicB = titleB.match(/Epic\s+(\d+)/i);
+    if (epicA && epicB) return parseInt(epicA[1]) - parseInt(epicB[1]);
+
+    return titleA.localeCompare(titleB);
   });
 }
 

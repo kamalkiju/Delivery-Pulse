@@ -86,6 +86,7 @@ export function toReviewStoryDto(doc) {
       ? "Possible regression of a prior story"
       : undefined,
     isAIGenerated: doc.isAIGenerated ?? true,
+    sequence: doc.sequence ?? null,
   };
 }
 
