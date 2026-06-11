@@ -97,7 +97,7 @@ export default function DocumentsPage() {
 
       const res = await api.post("/documents/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120000,
+        timeout: 300000, // 5 min — multi-chunk documents take longer
       });
 
       if (res.data.success) {

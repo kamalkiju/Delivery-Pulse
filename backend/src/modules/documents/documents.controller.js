@@ -11,6 +11,26 @@ const getClaudeClient = () => {
 
 const getOrgId = (req) => req.user?.orgId ?? req.user?.organisationId;
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Parse JSON from a Claude response, stripping markdown fences */
+function parseChunkResponse(text) {
+  let clean = text.trim()
+    .replace(/```json\s*/gi, "")
+    .replace(/```\s*/g, "")
+    .trim();
+
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start === -1 || end === -1) return null;
+
+  try {
+    return JSON.parse(clean.substring(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
 export const uploadDocument = async (req, res) => {
   try {
     const { projectId, clientId } = req.body;
@@ -21,8 +41,9 @@ export const uploadDocument = async (req, res) => {
       return res.status(400).json({ success: false, message: "No file uploaded" });
     }
 
-    console.log("[document] Processing:", file.originalname, "size:", file.size, "bytes");
+    console.log("[document] Processing:", file.originalname, "size:", file.size);
 
+    // ── Extract text ──────────────────────────────────────────────────────────
     let documentText = "";
     const filename = file.originalname.toLowerCase();
 
@@ -30,12 +51,10 @@ export const uploadDocument = async (req, res) => {
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer: file.buffer });
       documentText = result.value;
-      console.log("[document] Extracted docx text:", documentText.length, "chars");
     } else if (filename.endsWith(".pdf")) {
-      const pdfParse = await import("pdf-parse");
-      const result = await pdfParse.default(file.buffer);
+      const pdfParse = (await import("pdf-parse")).default;
+      const result = await pdfParse(file.buffer);
       documentText = result.text;
-      console.log("[document] Extracted pdf text:", documentText.length, "chars");
     } else if (filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
       const XLSX = await import("xlsx");
       const workbook = XLSX.read(file.buffer, { type: "buffer" });
@@ -44,10 +63,8 @@ export const uploadDocument = async (req, res) => {
         documentText += `Sheet: ${sheetName}\n`;
         documentText += XLSX.utils.sheet_to_csv(sheet) + "\n\n";
       });
-      console.log("[document] Extracted xlsx text:", documentText.length, "chars");
     } else if (filename.endsWith(".txt") || filename.endsWith(".csv")) {
       documentText = file.buffer.toString("utf-8");
-      console.log("[document] Extracted text:", documentText.length, "chars");
     } else {
       return res.status(400).json({
         success: false,
@@ -62,94 +79,90 @@ export const uploadDocument = async (req, res) => {
       });
     }
 
-    // Limit input so output has room to fit within max_tokens
-    const inputText = documentText.length > 8000
-      ? documentText.substring(0, 8000)
-      : documentText;
+    console.log("[document] Total text length:", documentText.length);
 
-    const prompt = `IMPORTANT: Return raw JSON only. Do NOT wrap in markdown code blocks. Do NOT use \`\`\`json or \`\`\`. Start your response with { and end with }
-
-You are a Business Analyst. Analyze this document and extract the TOP 10 most important requirements only. Focus on core features. Keep each story concise. Total response must be under 4000 tokens.
-
-Return ONLY this JSON structure:
-{"documentSummary":"brief summary","documentTitle":"title","totalRequirements":5,"stories":[{"storyTitle":"Module > Feature","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X to solve Y","sprint":"Current"}]}
-
-RULES: No markdown. No code blocks. No explanation. Raw JSON only. Minimum 3 ACs per story. Given/When/Then format.
-
-Document: ${file.originalname}${documentText.length > 8000 ? " (analyzing first section)" : ""}
-Content:
-${inputText}`;
-
-    console.log("[document] Sending to Claude AI (haiku)... input chars:", inputText.length);
-
-    const makeRequest = () => getClaudeClient().messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 6000,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    let aiResponse;
-    try {
-      aiResponse = await makeRequest();
-    } catch (apiError) {
-      if (apiError.status === 429) {
-        console.log("[document] Rate limit hit — waiting 60s before retry...");
-        await new Promise((resolve) => setTimeout(resolve, 60000));
-        aiResponse = await makeRequest();
-      } else {
-        throw apiError;
-      }
+    // ── Split into chunks ─────────────────────────────────────────────────────
+    const CHUNK_SIZE = 12000;
+    const chunks = [];
+    for (let i = 0; i < documentText.length; i += CHUNK_SIZE) {
+      chunks.push(documentText.substring(i, i + CHUNK_SIZE));
     }
+    console.log("[document] Processing", chunks.length, "chunk(s)");
 
-    const responseText = aiResponse.content[0].text;
-    console.log("[document] Response length:", responseText.length);
-    console.log("[document] Raw AI response (first 500):", responseText.substring(0, 500));
+    const claude = getClaudeClient();
+    let allStories = [];
+    let documentSummary = "";
+    let documentTitle = file.originalname;
 
-    // Strip markdown fences if present
-    let cleanJson = responseText.trim();
-    if (cleanJson.startsWith("```")) {
-      const firstNewline = cleanJson.indexOf("\n");
-      cleanJson = cleanJson.substring(firstNewline + 1);
-    }
-    if (cleanJson.endsWith("```")) {
-      cleanJson = cleanJson.substring(0, cleanJson.lastIndexOf("```"));
-    }
-    cleanJson = cleanJson.trim();
+    // ── Process each chunk ────────────────────────────────────────────────────
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const chunk = chunks[idx];
+      const isFirst = idx === 0;
+      const isLast = idx === chunks.length - 1;
 
-    const jsonStart = cleanJson.indexOf("{");
-    const jsonEnd = cleanJson.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1) {
-      console.error("[document] No JSON braces found. Full response:", responseText.substring(0, 1000));
-      return res.status(500).json({ success: false, message: "AI analysis failed — no JSON in response. Please try again." });
-    }
-    cleanJson = cleanJson.substring(jsonStart, jsonEnd + 1);
+      console.log(`[document] Processing chunk ${idx + 1}/${chunks.length}`);
 
-    let analysis;
-    try {
-      analysis = JSON.parse(cleanJson);
-      if (!analysis.stories || !Array.isArray(analysis.stories)) {
-        throw new Error("No stories array in response");
-      }
-      console.log("[document] Parsed successfully:", analysis.stories.length, "stories");
-    } catch (e) {
-      console.error("[document] Parse failed:", e.message);
-      // Partial-parse fallback — try to salvage the stories array
-      try {
-        const match = cleanJson.match(/"stories"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
-        if (match) {
-          analysis = { stories: JSON.parse(match[1]), documentSummary: "Document analyzed", totalRequirements: 0 };
-          console.log("[document] Used partial parse fallback:", analysis.stories.length, "stories");
-        } else {
-          throw new Error("Cannot extract stories from response");
+      const prompt = `You are a senior Business Analyst. Extract ALL user stories from this document section.
+
+IMPORTANT: Return ONLY raw JSON. No markdown. No code blocks. Start with { end with }
+
+${isFirst ? "This is the beginning of the document." : `This is section ${idx + 1} of ${chunks.length}.`}
+${isLast ? "This is the last section." : "More sections follow."}
+
+Return this exact JSON structure:
+{"documentSummary":"brief summary","documentTitle":"title","stories":[{"storyTitle":"Epic > Feature","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X to solve Y","sprint":"Current"}]}
+
+RULES:
+- Extract EVERY requirement as a separate story — do not skip any
+- Minimum 3 acceptance criteria per story in Given/When/Then format
+- Description must be "As a X I need Y So that Z"
+- No markdown, no code blocks, raw JSON only
+
+Document section ${idx + 1}:
+${chunk}`;
+
+      let attempt = 0;
+      while (attempt < 2) {
+        try {
+          const response = await claude.messages.create({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 4000,
+            messages: [{ role: "user", content: prompt }],
+          });
+
+          const parsed = parseChunkResponse(response.content[0].text);
+          if (parsed?.stories && Array.isArray(parsed.stories)) {
+            allStories = allStories.concat(parsed.stories);
+            console.log(
+              `[document] Chunk ${idx + 1} → ${parsed.stories.length} stories. Total: ${allStories.length}`
+            );
+            if (isFirst && parsed.documentSummary) {
+              documentSummary = parsed.documentSummary;
+              documentTitle = parsed.documentTitle || documentTitle;
+            }
+          } else {
+            console.warn(`[document] Chunk ${idx + 1} returned no parseable stories`);
+          }
+          break; // success — move to next chunk
+        } catch (err) {
+          if (err.status === 429) {
+            console.log(`[document] Rate limit on chunk ${idx + 1} — waiting 30s...`);
+            await sleep(30000);
+            attempt++;
+          } else {
+            console.error(`[document] Chunk ${idx + 1} error:`, err.message);
+            break;
+          }
         }
-      } catch (e2) {
-        console.error("[document] Full response:", responseText.substring(0, 1000));
-        return res.status(500).json({ success: false, message: "AI JSON parse failed. Please try again.", debug: e.message });
       }
+
+      // Polite delay between chunks to avoid rate limits
+      if (!isLast) await sleep(2000);
     }
 
-    console.log("[document] AI found", analysis.stories?.length, "stories");
+    console.log("[document] Total stories extracted:", allStories.length);
 
+    // ── Save document record ──────────────────────────────────────────────────
     const fileExt = filename.split(".").pop();
     const validTypes = ["docx", "xlsx", "pdf", "txt", "csv"];
     const savedDoc = await Document.create({
@@ -160,12 +173,13 @@ ${inputText}`;
       fileType: validTypes.includes(fileExt) ? fileExt : "txt",
       fileSize: file.size,
       status: "processed",
-      storiesCreated: analysis.stories?.length || 0,
+      storiesCreated: allStories.length,
       uploadedBy: req.user?.userId ?? req.user?.id,
     });
 
+    // ── Save stories to Review Queue ──────────────────────────────────────────
     const createdStories = [];
-    for (const storyData of analysis.stories || []) {
+    for (const storyData of allStories) {
       try {
         const story = await Story.create({
           organisationId,
@@ -180,7 +194,7 @@ ${inputText}`;
           status: "pending-review",
           source: "document",
           sourceRef: savedDoc._id.toString(),
-          sourceQuote: `From document: ${file.originalname}`,
+          sourceQuote: `From: ${file.originalname}`,
           acceptanceCriteria: storyData.acceptanceCriteria?.map((ac) => ac.scenario || ac) || [],
           acceptanceCriteriaFormatted: storyData.acceptanceCriteria || [],
           releaseNotes: storyData.releaseNotes || "",
@@ -199,10 +213,11 @@ ${inputText}`;
       success: true,
       message: "Document analyzed successfully",
       documentId: savedDoc._id,
-      documentTitle: analysis.documentTitle || file.originalname,
-      documentSummary: analysis.documentSummary || "",
-      totalRequirements: analysis.totalRequirements || createdStories.length,
+      documentSummary,
+      documentTitle,
       storiesCreated: createdStories.length,
+      totalRequirements: allStories.length,
+      chunksProcessed: chunks.length,
       stories: createdStories.map((s) => ({
         _id: s._id,
         storyTitle: s.storyTitle,
