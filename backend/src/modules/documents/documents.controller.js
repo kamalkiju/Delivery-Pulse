@@ -2,7 +2,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import Story from "../../models/Story.model.js";
 import Document from "../../models/Document.model.js";
 
-const claude = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
+const getClaudeClient = () => {
+  const apiKey = process.env.CLAUDE_API_KEY;
+  console.log("[document] API key configured:", apiKey ? "YES" : "NO - MISSING");
+  if (!apiKey) throw new Error("CLAUDE_API_KEY is not set in environment variables");
+  return new Anthropic({ apiKey });
+};
+
 const getOrgId = (req) => req.user?.orgId ?? req.user?.organisationId;
 
 export const uploadDocument = async (req, res) => {
@@ -118,7 +124,7 @@ Return ONLY valid JSON. No markdown. No code blocks. Just JSON.`;
 
     console.log("[document] Sending to Claude AI...");
 
-    const response = await claude.messages.create({
+    const response = await getClaudeClient().messages.create({
       model: "claude-sonnet-4-5",
       max_tokens: 8000,
       messages: [{ role: "user", content: prompt }],

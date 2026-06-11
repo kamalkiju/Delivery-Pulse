@@ -1,7 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
 import axios from "axios";
 
-const claude = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
+// Create a fresh client per call so the API key is read at request time, not module load.
+const getClaudeClient = () => {
+  const apiKey = process.env.CLAUDE_API_KEY;
+  console.log("[ai] API key configured:", apiKey ? "YES" : "NO - MISSING");
+  if (!apiKey || apiKey === "your_claude_api_key_here") {
+    throw new Error("CLAUDE_API_KEY is not set in environment variables");
+  }
+  return new Anthropic({ apiKey });
+};
 
 function buildFallbackResult(messageText) {
   const safeText = messageText ?? "";
@@ -40,8 +48,10 @@ export async function analyzeMessage({
 }) {
   const messageText = (text ?? "").trim();
 
-  const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey || apiKey === "your_claude_api_key_here") {
+  let claude;
+  try {
+    claude = getClaudeClient();
+  } catch {
     console.warn("[ai] CLAUDE_API_KEY missing — using fallback story fields");
     return buildFallbackResult(messageText);
   }
@@ -133,7 +143,6 @@ Return ONLY the JSON object above with all fields filled in properly.`;
 
   try {
     console.log("[ai] using model: claude-sonnet-4-5");
-    console.log("[ai] API key starts with:", process.env.CLAUDE_API_KEY?.substring(0, 10));
     const response = await claude.messages.create({
       model: "claude-sonnet-4-5",
       max_tokens: 2000,
