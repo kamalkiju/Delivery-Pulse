@@ -8,7 +8,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Story from "../../models/Story.model.js";
-import SlackWorkspace from "../../models/SlackWorkspace.model.js";
 
 // ── Helpers: shape MongoDB documents for the React UI ───────────────────────
 
@@ -102,46 +101,21 @@ export function toReviewStoryDto(doc) {
  */
 export async function getReviewQueue(req, res) {
   try {
-    const organisationId = req.user?.orgId ?? req.user?.organisationId;
-
-    if (!organisationId) {
-      return res.status(400).json({
-        success: false,
-        message: "Organisation not found in session",
-      });
-    }
-
     const { source, projectId } = req.query;
 
-    // Sweep all active workspace org IDs so stories saved under a previously
-    // linked org are still visible (account-recreate / reconnect scenario).
-    const activeWorkspaces = await SlackWorkspace.find({ isActive: true })
-      .select("organisationId")
-      .lean();
+    const filter = { status: "pending-review" };
+    if (source) filter.source = source;
+    if (projectId) filter.projectId = projectId;
 
-    const orgIds = [
-      ...new Set([
-        organisationId.toString(),
-        ...activeWorkspaces.map((w) => w.organisationId?.toString()).filter(Boolean),
-      ]),
-    ];
+    console.log("[reviewQueue] filter:", JSON.stringify(filter));
 
-    console.log("[reviewQueue] user org:", organisationId, "| orgIds:", orgIds, "| source:", source ?? "all");
-
-    const storyFilter = {
-      status: "pending-review",
-      organisationId: { $in: orgIds },
-    };
-    if (source) storyFilter.source = source;
-    if (projectId) storyFilter.projectId = projectId;
-
-    const stories = await Story.find(storyFilter)
+    const stories = await Story.find(filter)
       .populate("clientId", "name company")
       .populate("projectId", "name color")
       .sort({ createdAt: -1 })
       .limit(100);
 
-    console.log("[reviewQueue] found:", stories.length, "stories");
+    console.log("[reviewQueue] found:", stories.length);
 
     const stats = {
       pending: stories.length,
