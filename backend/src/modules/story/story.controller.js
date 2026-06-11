@@ -138,3 +138,18 @@ export async function updateStory(req, res) {
     });
   }
 }
+
+/** DELETE /api/stories/delete-documents — temporary testing cleanup */
+export const deleteDocumentStories = async (req, res) => {
+  try {
+    const result = await Story.deleteMany({ source: "document" });
+    console.log("[stories] Deleted", result.deletedCount, "document stories");
+    res.json({
+      success: true,
+      deleted: result.deletedCount,
+      message: `Deleted ${result.deletedCount} document stories`,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

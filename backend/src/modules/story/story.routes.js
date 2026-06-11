@@ -19,6 +19,7 @@ import {
   rejectStory,
   updateStory,
   getStories,
+  deleteDocumentStories,
 } from "./story.controller.js";
 
 const router = express.Router();
@@ -27,6 +28,9 @@ router.use(authMiddleware);
 
 // GET /api/stories — list with optional ?status=&source=&projectId= filters
 router.get("/", getStories);
+
+// DELETE /api/stories/delete-documents — temporary testing cleanup
+router.delete("/delete-documents", deleteDocumentStories);
 
 // PATCH /api/stories/:id/approve — BA clicks green Approve on a card
 router.patch("/:id/approve", approveStory);
