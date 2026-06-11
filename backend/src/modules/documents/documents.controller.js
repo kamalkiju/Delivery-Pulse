@@ -62,75 +62,65 @@ export const uploadDocument = async (req, res) => {
       });
     }
 
-    const maxChars = 80000;
+    const maxChars = 20000;
     const truncatedText =
       documentText.length > maxChars
-        ? documentText.substring(0, maxChars) + "\n\n[Document truncated — first 80000 characters analyzed]"
+        ? documentText.substring(0, maxChars) + "\n\n[Document truncated]"
         : documentText;
 
-    const prompt = `You are a senior Business Analyst and Product Manager.
-Analyze this product requirement document thoroughly and completely.
+    const prompt = `You are a Business Analyst. Analyze this document and extract requirements as ADO stories.
 
-Your task:
-- Read EVERY section, EVERY page, EVERY requirement
-- Extract ALL user stories, features, bugs, tasks, and requirements
-- Create properly structured ADO stories for each requirement
-- Be thorough — do not skip any requirement
-
-Return ONLY valid JSON in this EXACT format:
+Return ONLY valid JSON:
 {
-  "documentTitle": "The title or name of this document",
-  "documentSummary": "Brief 2-3 sentence summary of the entire document",
-  "totalRequirements": 10,
+  "documentTitle": "document title",
+  "documentSummary": "2-3 sentence summary",
+  "totalRequirements": 5,
   "stories": [
     {
-      "storyTitle": "ProjectName > Module > Specific Feature Name",
-      "type": "Story or Bug or Feature or Task",
-      "priority": "Critical or High or Medium or Low",
-      "description": "As a [specific user type] I need [specific capability] So that [specific business value and measurable outcome]",
+      "storyTitle": "ProjectName > Module > Feature",
+      "type": "Story|Bug|Feature|Task",
+      "priority": "Critical|High|Medium|Low",
+      "description": "As a [user] I need [capability] So that [value]",
       "acceptanceCriteria": [
-        { "id": "AC 1", "scenario": "Given [initial context] When [action is performed] Then [expected outcome]" },
-        { "id": "AC 2", "scenario": "Given [initial context] When [action is performed] Then [expected outcome]" },
-        { "id": "AC 3", "scenario": "Given [initial context] When [action is performed] Then [expected outcome]" }
+        { "id": "AC 1", "scenario": "Given [context] When [action] Then [outcome]" },
+        { "id": "AC 2", "scenario": "Given [context] When [action] Then [outcome]" },
+        { "id": "AC 3", "scenario": "Given [context] When [action] Then [outcome]" }
       ],
-      "releaseNotes": "We introduced [feature name] to [solve specific problem]. This was developed to meet [specific requirement]. [Business impact statement].",
-      "sprint": "Current or Next or Backlog"
+      "releaseNotes": "We introduced [feature] to [solve problem].",
+      "sprint": "Current|Next|Backlog"
     }
   ]
 }
 
-STRICT RULES:
-1. Extract EVERY SINGLE requirement as a separate story
-2. NEVER use raw text as story title — create meaningful titles
-3. ALWAYS write description as "As a X I need Y So that Z"
-4. ALWAYS create minimum 3 acceptance criteria per story
-5. ALWAYS use Given/When/Then format for ALL criteria
-6. Priority rules:
-   - Critical: system broken, security issue, data loss, show stopper
-   - High: core feature, blocks users, business critical
-   - Medium: important feature, enhancement
-   - Low: nice to have, minor improvement
-7. Type rules:
-   - Bug: fix, error, broken, not working, issue
-   - Feature: new capability, add, introduce
-   - Story: user requirement, need to, should be able to
-   - Task: update, configure, setup, migrate
+Rules: Extract every requirement. Description must be "As a X I need Y So that Z". Minimum 3 ACs per story using Given/When/Then.
 
-Document filename: ${file.originalname}
-Document content:
+Document: ${file.originalname}
 ${truncatedText}
 
-Return ONLY valid JSON. No markdown. No code blocks. Just JSON.`;
+Return ONLY JSON. No markdown.`;
 
-    console.log("[document] Sending to Claude AI...");
+    console.log("[document] Sending to Claude AI (haiku)...");
 
-    const response = await getClaudeClient().messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 8000,
+    const makeRequest = () => getClaudeClient().messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 4000,
       messages: [{ role: "user", content: prompt }],
     });
 
-    const responseText = response.content[0].text;
+    let aiResponse;
+    try {
+      aiResponse = await makeRequest();
+    } catch (apiError) {
+      if (apiError.status === 429) {
+        console.log("[document] Rate limit hit — waiting 60s before retry...");
+        await new Promise((resolve) => setTimeout(resolve, 60000));
+        aiResponse = await makeRequest();
+      } else {
+        throw apiError;
+      }
+    }
+
+    const responseText = aiResponse.content[0].text;
     const clean = responseText.replace(/```json/gi, "").replace(/```/g, "").trim();
 
     let analysis;
