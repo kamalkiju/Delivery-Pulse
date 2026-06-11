@@ -82,7 +82,7 @@ export const uploadDocument = async (req, res) => {
     console.log("[document] Total text length:", documentText.length);
 
     // ── Split into chunks ─────────────────────────────────────────────────────
-    const CHUNK_SIZE = 6000;
+    const CHUNK_SIZE = 4000;
     const chunks = [];
     for (let i = 0; i < documentText.length; i += CHUNK_SIZE) {
       chunks.push(documentText.substring(i, i + CHUNK_SIZE));
@@ -117,7 +117,7 @@ ${chunk.substring(0, CHUNK_SIZE)}`;
         try {
           const response = await claude.messages.create({
             model: "claude-haiku-4-5",
-            max_tokens: 4000,
+            max_tokens: 3000,
             messages: [{ role: "user", content: prompt }],
           });
 
