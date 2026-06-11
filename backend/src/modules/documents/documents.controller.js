@@ -31,14 +31,68 @@ function parseChunkResponse(text) {
   }
 }
 
+/** Map Claude AC objects → Story model string + formatted fields */
+function mapAcceptanceCriteria(storyData) {
+  const raw = storyData.acceptanceCriteria || [];
+  const acceptanceCriteria = raw
+    .map((ac) => {
+      if (typeof ac === "string") return ac;
+      return (
+        ac.scenario ||
+        ac.then ||
+        ac.given ||
+        `${ac.given || ""} ${ac.when || ""} ${ac.then || ""}`.trim() ||
+        JSON.stringify(ac)
+      );
+    })
+    .filter(Boolean);
+
+  const acceptanceCriteriaFormatted = raw
+    .map((ac, i) => ({
+      id: ac.id || `AC ${i + 1}`,
+      scenario:
+        ac.scenario ||
+        ac.then ||
+        `${ac.given || ""} ${ac.when || ""} ${ac.then || ""}`.trim() ||
+        (typeof ac === "string" ? ac : JSON.stringify(ac)),
+      given: ac.given || "",
+      when: ac.when || "",
+      then: ac.then || ac.scenario || "",
+    }))
+    .filter((ac) => ac.scenario);
+
+  return { acceptanceCriteria, acceptanceCriteriaFormatted };
+}
+
 export const uploadDocument = async (req, res) => {
   try {
     const { projectId, clientId } = req.body;
     const file = req.file;
-    const organisationId = getOrgId(req);
+    const organisationId =
+      req.user?.organisationId ?? req.user?.orgId ?? getOrgId(req);
+    const userId = req.user?.userId ?? req.user?.id;
 
     if (!file) {
       return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    // VALIDATION 1 — allowed file types
+    const allowedTypes = ["docx", "pdf", "xlsx", "xls", "txt", "csv"];
+    const fileExt = file.originalname.split(".").pop()?.toLowerCase() ?? "";
+    if (!allowedTypes.includes(fileExt)) {
+      return res.status(400).json({
+        success: false,
+        message: `File type .${fileExt} not supported. Please upload: ${allowedTypes.join(", ")}`,
+      });
+    }
+
+    // VALIDATION 2 — max 10 MB
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      return res.status(400).json({
+        success: false,
+        message: "File too large. Maximum size is 10MB",
+      });
     }
 
     console.log("[document] Processing:", file.originalname, "size:", file.size);
@@ -65,17 +119,14 @@ export const uploadDocument = async (req, res) => {
       });
     } else if (filename.endsWith(".txt") || filename.endsWith(".csv")) {
       documentText = file.buffer.toString("utf-8");
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: "Unsupported file type. Please upload .docx, .pdf, .xlsx, or .txt",
-      });
     }
 
-    if (!documentText || documentText.trim().length < 10) {
+    // VALIDATION 3 — minimum readable content
+    if (!documentText || documentText.trim().length < 100) {
       return res.status(400).json({
         success: false,
-        message: "Could not extract text from document. Please check the file.",
+        message:
+          "Document appears to be empty or could not be read. Please check the file.",
       });
     }
 
@@ -191,25 +242,28 @@ ${chunk.substring(0, CHUNK_SIZE)}`;
 
     console.log("[document] Total stories extracted:", allStories.length);
 
-    // ── Save document record ──────────────────────────────────────────────────
-    const fileExt = filename.split(".").pop();
-    const validTypes = ["docx", "xlsx", "pdf", "txt", "csv"];
+    // ── Save document record (VALIDATION 4 — owner + org) ─────────────────────
     const savedDoc = await Document.create({
       organisationId,
       projectId: projectId || null,
       clientId: clientId || undefined,
       originalName: file.originalname,
-      fileType: validTypes.includes(fileExt) ? fileExt : "txt",
+      fileType: allowedTypes.includes(fileExt) ? fileExt : "txt",
       fileSize: file.size,
       status: "processed",
       storiesCreated: allStories.length,
-      uploadedBy: req.user?.userId ?? req.user?.id,
+      uploadedBy: userId,
+      uploadedByName: req.user?.name || "Unknown",
     });
 
     // ── Save stories to Review Queue ──────────────────────────────────────────
     const createdStories = [];
     for (const storyData of allStories) {
       try {
+        const { acceptanceCriteria, acceptanceCriteriaFormatted } =
+          mapAcceptanceCriteria(storyData);
+
+        // VALIDATION 5 — stories always belong to uploader's organisation
         const story = await Story.create({
           organisationId,
           projectId: projectId || null,
@@ -223,13 +277,21 @@ ${chunk.substring(0, CHUNK_SIZE)}`;
           status: "pending-review",
           source: "document",
           sourceRef: savedDoc._id.toString(),
-          sourceQuote: `From: ${file.originalname}`,
-          acceptanceCriteria: storyData.acceptanceCriteria?.map((ac) => ac.scenario || ac) || [],
-          acceptanceCriteriaFormatted: storyData.acceptanceCriteria || [],
+          sourceQuote: `From document: ${file.originalname}`,
+          acceptanceCriteria,
+          acceptanceCriteriaFormatted,
           releaseNotes: storyData.releaseNotes || "",
           sprint: storyData.sprint || "Backlog",
           isAIGenerated: true,
         });
+
+        console.log(
+          "[document] Story AC count:",
+          storyData.acceptanceCriteria?.length,
+          "saved as:",
+          story.acceptanceCriteria?.length,
+        );
+
         createdStories.push(story);
       } catch (storyErr) {
         console.error("[document] Story create error:", storyErr.message);
@@ -252,6 +314,7 @@ ${chunk.substring(0, CHUNK_SIZE)}`;
         storyTitle: s.storyTitle,
         type: s.type,
         priority: s.priority,
+        acceptanceCriteria: s.acceptanceCriteria,
       })),
     });
   } catch (error) {

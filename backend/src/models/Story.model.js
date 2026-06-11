@@ -75,6 +75,7 @@ const storySchema = new mongoose.Schema({
     type: [
       {
         id: String,
+        scenario: String,
         given: String,
         when: String,
         then: String,

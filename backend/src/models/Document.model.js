@@ -29,7 +29,7 @@ const documentSchema = new mongoose.Schema({
 
   fileType: {
     type: String,
-    enum: ["docx", "xlsx", "pdf"],
+    enum: ["docx", "xlsx", "xls", "pdf", "txt", "csv"],
     required: true,
   },
 
@@ -70,6 +70,10 @@ const documentSchema = new mongoose.Schema({
   uploadedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
+  },
+
+  uploadedByName: {
+    type: String,
   },
 
   createdAt: {

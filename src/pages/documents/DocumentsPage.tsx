@@ -8,7 +8,13 @@ interface AnalysisResult {
   documentSummary?: string;
   storiesCreated: number;
   totalRequirements?: number;
-  stories?: { _id: string; storyTitle: string; type: string; priority: string }[];
+  stories?: {
+    _id: string;
+    storyTitle: string;
+    type: string;
+    priority: string;
+    acceptanceCriteria?: string[];
+  }[];
 }
 
 interface DocumentRecord {
@@ -170,7 +176,12 @@ export default function DocumentsPage() {
                   </span>
                 ))}
               </div>
-              <p style={{ fontSize: 12, color: "#94a3b8", margin: "12px 0 0" }}>Max 10 MB</p>
+              <p style={{ fontSize: 12, color: "#94a3b8", margin: "12px 0 0" }}>
+                Allowed: .docx .pdf .xlsx .txt · Max file size: 10MB
+              </p>
+              <p style={{ fontSize: 13, color: "#64748b", margin: "14px 0 0", lineHeight: 1.5 }}>
+                AI will analyze your document and create structured ADO stories automatically
+              </p>
             </>
           ) : (
             <>
@@ -226,14 +237,23 @@ export default function DocumentsPage() {
         )}
 
         {/* Result */}
-        {analysisResult && (
+        {analysisResult && (() => {
+          const totalAC =
+            analysisResult.stories?.reduce(
+              (sum, s) => sum + (s.acceptanceCriteria?.length || 0),
+              0,
+            ) ?? 0;
+          const bugCount =
+            analysisResult.stories?.filter((s) => s.type === "Bug").length ?? 0;
+
+          return (
           <div style={{ backgroundColor: "#f0fdf4", border: "1px solid #86efac", borderRadius: 12, padding: 24, marginBottom: 28 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
               <span style={{ fontSize: 32 }}>🎉</span>
               <div>
                 <p style={{ fontSize: 18, fontWeight: 700, color: "#16a34a", margin: 0 }}>Analysis Complete!</p>
                 <p style={{ fontSize: 14, color: "#166534", margin: "2px 0 0" }}>
-                  {analysisResult.storiesCreated} stories created from {selectedFile?.name}
+                  {analysisResult.storiesCreated} stories created with {totalAC} acceptance criteria from {selectedFile?.name}
                 </p>
               </div>
             </div>
@@ -246,9 +266,10 @@ export default function DocumentsPage() {
 
             <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
               {[
-                { label: "Stories Created", value: analysisResult.storiesCreated, color: "#0088ff" },
-                { label: "Bugs Found",      value: analysisResult.stories?.filter((s) => s.type === "Bug").length ?? 0,     color: "#dc2626" },
-                { label: "Features",        value: analysisResult.stories?.filter((s) => s.type === "Feature").length ?? 0, color: "#7c3aed" },
+                { label: "Stories", value: analysisResult.storiesCreated, color: "#0088ff" },
+                { label: "Acceptance Criteria", value: totalAC, color: "#0d9488" },
+                { label: "Bugs", value: bugCount, color: "#dc2626" },
+                { label: "Features", value: analysisResult.stories?.filter((s) => s.type === "Feature").length ?? 0, color: "#7c3aed" },
               ].map(({ label, value, color }) => (
                 <div key={label} style={{ backgroundColor: "#fff", borderRadius: 8, padding: "12px 16px", textAlign: "center", flex: 1 }}>
                   <div style={{ fontSize: 28, fontWeight: 700, color }}>{value}</div>
@@ -283,7 +304,8 @@ export default function DocumentsPage() {
               View Stories in Review Queue →
             </button>
           </div>
-        )}
+          );
+        })()}
 
         {/* Previously analyzed documents */}
         {documents.length > 0 && (
