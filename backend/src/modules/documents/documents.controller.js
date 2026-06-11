@@ -132,11 +132,12 @@ export const uploadDocument = async (req, res) => {
 
     console.log("[document] Total text length:", documentText.length);
 
-    // ── Split into chunks ─────────────────────────────────────────────────────
-    const CHUNK_SIZE = 4000;
+    // ── Split into chunks (with overlap to avoid missing stories at boundaries) ─
+    const CHUNK_SIZE = 3000;
     const chunks = [];
     for (let i = 0; i < documentText.length; i += CHUNK_SIZE) {
-      chunks.push(documentText.substring(i, i + CHUNK_SIZE));
+      const start = Math.max(0, i - 200);
+      chunks.push(documentText.substring(start, i + CHUNK_SIZE));
     }
     console.log("[document] Processing", chunks.length, "chunk(s)");
 
@@ -155,13 +156,28 @@ export const uploadDocument = async (req, res) => {
 
       const prompt = `Extract user stories from this document section as JSON.
 
+The document uses Epics as main categories.
+Each Epic contains multiple user stories.
+Create one story per user story found.
+Use the Epic name as the prefix in storyTitle:
+Example: 'Epic 1: User Access > Login with Email'
+
+Look for patterns like:
+- 'As a user I want...'
+- 'As a [role] I need...'
+- 'As a [role] I want...'
+Each of these is a separate story.
+
+Count every 'As a' statement as one story.
+Do not combine multiple As-a statements into one story.
+
 Return ONLY this JSON structure, nothing else:
-{"stories":[{"storyTitle":"Epic > Feature","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X","sprint":"Current"}]}
+{"stories":[{"storyTitle":"Epic 1: User Access > Login with Email","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X","sprint":"Current"}]}
 
 Extract every requirement. Return raw JSON only.
 
 Section ${idx + 1}/${chunks.length}:
-${chunk.substring(0, CHUNK_SIZE)}`;
+${chunk}`;
 
       let attempt = 0;
       while (attempt < 2) {
@@ -241,6 +257,15 @@ ${chunk.substring(0, CHUNK_SIZE)}`;
     }
 
     console.log("[document] Total stories extracted:", allStories.length);
+
+    const seen = new Set();
+    allStories = allStories.filter((story) => {
+      const key = (story.storyTitle || "").toLowerCase().trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    console.log("[document] After dedup:", allStories.length, "stories");
 
     // ── Save document record (VALIDATION 4 — owner + org) ─────────────────────
     const savedDoc = await Document.create({
