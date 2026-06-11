@@ -153,3 +153,27 @@ export const deleteDocumentStories = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/** DELETE /api/stories/:id */
+export const deleteStory = async (req, res) => {
+  try {
+    await Story.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "Story deleted" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/** DELETE /api/stories/delete-by-source/:source */
+export const deleteBySource = async (req, res) => {
+  try {
+    const result = await Story.deleteMany({ source: req.params.source });
+    res.json({
+      success: true,
+      deleted: result.deletedCount,
+      message: `Deleted ${result.deletedCount} stories`,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

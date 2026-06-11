@@ -20,6 +20,8 @@ import {
   updateStory,
   getStories,
   deleteDocumentStories,
+  deleteStory,
+  deleteBySource,
 } from "./story.controller.js";
 
 const router = express.Router();
@@ -31,6 +33,9 @@ router.get("/", getStories);
 
 // DELETE /api/stories/delete-documents — temporary testing cleanup
 router.delete("/delete-documents", deleteDocumentStories);
+
+// DELETE /api/stories/delete-by-source/:source — bulk delete by source
+router.delete("/delete-by-source/:source", deleteBySource);
 
 // PATCH /api/stories/:id/approve — BA clicks green Approve on a card
 router.patch("/:id/approve", approveStory);
@@ -44,5 +49,8 @@ router.post("/:id/reject", rejectStory);
 
 // PATCH /api/stories/:id — BA saves edits from the slide-in panel
 router.patch("/:id", updateStory);
+
+// DELETE /api/stories/:id — remove a single story
+router.delete("/:id", deleteStory);
 
 export default router;

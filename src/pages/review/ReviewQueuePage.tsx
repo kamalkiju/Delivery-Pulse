@@ -128,6 +128,7 @@ const ReviewQueuePage = () => {
     description: "", acceptanceCriteria: [], releaseNotes: "",
   });
   const [expanded, setExpanded]               = useState<Record<string, boolean>>({});
+  const [deletingId, setDeletingId]           = useState<string | null>(null);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
@@ -199,6 +200,30 @@ const ReviewQueuePage = () => {
       fetchAllStories();
     } catch {
       alert("Failed to reject story");
+    }
+  };
+
+  const handleDeleteStory = async (storyId: string) => {
+    if (!window.confirm("Delete this story?")) return;
+    try {
+      setDeletingId(storyId);
+      await api.delete(`/stories/${storyId}`);
+      fetchAllStories();
+    } catch {
+      alert("Failed to delete story");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteAllDocumentStories = async () => {
+    if (!window.confirm("Delete ALL document stories? This cannot be undone.")) return;
+    try {
+      await api.delete("/stories/delete-by-source/document");
+      fetchAllStories();
+      alert("All document stories deleted");
+    } catch {
+      alert("Failed to delete stories");
     }
   };
 
@@ -328,6 +353,25 @@ const ReviewQueuePage = () => {
               <button type="button" onClick={() => handleEditClick(story)} style={{ padding: "6px 14px", backgroundColor: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
               <button type="button" onClick={() => handleReject(storyId)} style={{ padding: "6px 14px", backgroundColor: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
               <button type="button" onClick={() => handleApprove(storyId)} style={{ padding: "6px 14px", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Approve</button>
+              {(story.source === "document" || tabSource === "document") && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteStory(storyId)}
+                  disabled={deletingId === storyId}
+                  style={{
+                    padding: "6px 16px",
+                    backgroundColor: "white",
+                    color: "#dc2626",
+                    border: "1px solid #dc2626",
+                    borderRadius: 6,
+                    cursor: deletingId === storyId ? "not-allowed" : "pointer",
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  {deletingId === storyId ? "..." : "🗑️"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -429,7 +473,29 @@ const ReviewQueuePage = () => {
               {activeTab === "document" && (
                 documentStories.length === 0
                   ? <EmptyState icon="📄" title="No document stories pending review" subtitle="Upload a PRD or UAT document to generate stories automatically" buttonText="Upload Document" buttonAction={() => { window.location.href = "/documents"; }} />
-                  : documentStories.map((s) => renderStoryCard(s, "document"))
+                  : (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+                        <button
+                          type="button"
+                          onClick={handleDeleteAllDocumentStories}
+                          style={{
+                            padding: "8px 16px",
+                            backgroundColor: "#dc2626",
+                            color: "white",
+                            border: "none",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            fontSize: 13,
+                            fontWeight: 500,
+                          }}
+                        >
+                          🗑️ Delete All Document Stories
+                        </button>
+                      </div>
+                      {documentStories.map((s) => renderStoryCard(s, "document"))}
+                    </>
+                  )
               )}
               {activeTab === "ado" && (
                 adoStories.length === 0

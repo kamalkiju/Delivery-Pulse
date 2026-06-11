@@ -65,6 +65,17 @@ export default function DocumentsPage() {
 
   useEffect(() => { fetchDocuments(); }, []);
 
+  const handleDeleteDocument = async (docId: string) => {
+    if (!window.confirm("Delete this document and all its stories?")) return;
+    try {
+      await api.delete(`/documents/${docId}`);
+      fetchDocuments();
+      alert("Document and stories deleted");
+    } catch {
+      alert("Failed to delete document");
+    }
+  };
+
   const validate = (file: File): string | null => {
     const allowed = [".docx", ".pdf", ".xlsx", ".xls", ".txt", ".csv"];
     const ext = "." + file.name.split(".").pop()?.toLowerCase();
@@ -325,9 +336,26 @@ export default function DocumentsPage() {
                       </p>
                     </div>
                   </div>
-                  <span style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, flexShrink: 0 }}>
-                    ✅ {doc.storiesCreated} stories
-                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                    <span style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
+                      ✅ {doc.storiesCreated} stories
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDocument(doc._id)}
+                      style={{
+                        padding: "6px 12px",
+                        backgroundColor: "white",
+                        color: "#dc2626",
+                        border: "1px solid #fca5a5",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        fontSize: 12,
+                      }}
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

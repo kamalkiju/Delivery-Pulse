@@ -333,3 +333,19 @@ export const getDocuments = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+export const deleteDocument = async (req, res) => {
+  try {
+    const docId = req.params.id;
+
+    await Story.deleteMany({ sourceRef: docId });
+    await Document.findByIdAndDelete(docId);
+
+    res.json({
+      success: true,
+      message: "Document and all its stories deleted",
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
