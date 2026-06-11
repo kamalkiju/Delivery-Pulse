@@ -62,48 +62,52 @@ export const uploadDocument = async (req, res) => {
       });
     }
 
-    const maxChars = 30000;
+    const maxChars = 10000;
     const truncatedText =
       documentText.length > maxChars
         ? documentText.substring(0, maxChars) + "\n\n[Document truncated]"
         : documentText;
 
-    const prompt = `You are a Business Analyst. Analyze this document and extract requirements as ADO stories.
+    const prompt = `You are a Business Analyst. Analyze this document and extract user stories.
 
-Return ONLY valid JSON:
+Return ONLY a JSON object in this exact format with no other text:
 {
-  "documentTitle": "document title",
-  "documentSummary": "2-3 sentence summary",
+  "documentSummary": "brief summary here",
+  "documentTitle": "document title here",
   "totalRequirements": 5,
   "stories": [
     {
-      "storyTitle": "ProjectName > Module > Feature",
-      "type": "Story|Bug|Feature|Task",
-      "priority": "Critical|High|Medium|Low",
-      "description": "As a [user] I need [capability] So that [value]",
+      "storyTitle": "Module > Feature Name",
+      "type": "Story",
+      "priority": "Medium",
+      "description": "As a user I need X So that Y",
       "acceptanceCriteria": [
-        { "id": "AC 1", "scenario": "Given [context] When [action] Then [outcome]" },
-        { "id": "AC 2", "scenario": "Given [context] When [action] Then [outcome]" },
-        { "id": "AC 3", "scenario": "Given [context] When [action] Then [outcome]" }
+        {"id": "AC 1", "scenario": "Given X When Y Then Z"},
+        {"id": "AC 2", "scenario": "Given X When Y Then Z"},
+        {"id": "AC 3", "scenario": "Given X When Y Then Z"}
       ],
-      "releaseNotes": "We introduced [feature] to [solve problem].",
-      "sprint": "Current|Next|Backlog"
+      "releaseNotes": "We introduced X to solve Y",
+      "sprint": "Current"
     }
   ]
 }
 
-Rules: Extract every requirement. Description must be "As a X I need Y So that Z". Minimum 3 ACs per story using Given/When/Then.
+RULES:
+- Return ONLY the JSON object above
+- No markdown, no code blocks, no explanation
+- Extract every requirement as a separate story
+- Minimum 3 acceptance criteria per story
+- Use Given/When/Then format
 
 Document: ${file.originalname}
-${truncatedText}
-
-Return ONLY JSON. No markdown.`;
+Content:
+${truncatedText.substring(0, 15000)}`;
 
     console.log("[document] Sending to Claude AI (haiku)...");
 
     const makeRequest = () => getClaudeClient().messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 4000,
+      max_tokens: 3000,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -121,17 +125,39 @@ Return ONLY JSON. No markdown.`;
     }
 
     const responseText = aiResponse.content[0].text;
-    const clean = responseText.replace(/```json/gi, "").replace(/```/g, "").trim();
+    console.log("[document] Raw AI response (first 500):", responseText.substring(0, 500));
 
     let analysis;
     try {
-      analysis = JSON.parse(clean);
+      const clean = responseText
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .replace(/^\s*Here\s+is\s+.*?:\s*/i, "")
+        .replace(/^\s*I\s+have\s+.*?:\s*/i, "")
+        .trim();
+
+      const jsonStart = clean.indexOf("{");
+      const jsonEnd = clean.lastIndexOf("}");
+
+      if (jsonStart === -1 || jsonEnd === -1) {
+        throw new Error("No JSON object found in response");
+      }
+
+      const jsonStr = clean.substring(jsonStart, jsonEnd + 1);
+      analysis = JSON.parse(jsonStr);
+
+      if (!analysis.stories || !Array.isArray(analysis.stories)) {
+        throw new Error("No stories array in response");
+      }
+
+      console.log("[document] Parsed successfully:", analysis.stories.length, "stories");
     } catch (parseError) {
-      console.error("[document] JSON parse error:", parseError.message);
-      console.error("[document] Raw response:", responseText.substring(0, 500));
+      console.error("[document] Parse error:", parseError.message);
+      console.error("[document] Full response:", responseText.substring(0, 1000));
       return res.status(500).json({
         success: false,
-        message: "AI could not parse the document. Please try again.",
+        message: "AI analysis failed. Please try uploading again.",
+        debug: parseError.message,
       });
     }
 
