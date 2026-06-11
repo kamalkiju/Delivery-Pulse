@@ -5,13 +5,17 @@ import api from "../../api/axios";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface AcItem {
-  id: string;
-  scenario: string;
+  id?: string;
+  scenario?: string;
+  given?: string;
+  when?: string;
+  then?: string;
 }
 
 interface Story {
   _id?: string;
   id?: string;
+  ticketId?: string;
   storyTitle?: string;
   title: string;
   type: string;
@@ -27,8 +31,12 @@ interface Story {
   approvedAt?: string;
   updatedAt?: string;
   createdAt?: string;
-  clientId?: { name: string; company?: string } | null;
+  timeAgo?: string;
+  client?: string;
+  clientId?: { _id?: string; name: string; company?: string } | string | null;
   projectId?: { name: string; color?: string } | null;
+  isAIGenerated?: boolean;
+  regressionWarning?: string;
 }
 
 interface EditForm {
@@ -36,57 +44,59 @@ interface EditForm {
   type: string;
   priority: string;
   description: string;
-  acceptanceCriteria: AcItem[];
+  acceptanceCriteria: { id: string; scenario: string }[];
   releaseNotes: string;
 }
 
-// ── Colour maps ──────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-const typeColors: Record<string, { bg: string; text: string; border: string }> = {
+const sid = (s: Story): string => s._id ?? s.id ?? "";
+
+const clientName = (s: Story): string => {
+  if (!s.clientId) return s.client ?? "";
+  if (typeof s.clientId === "string") return s.client ?? "";
+  return s.clientId.name ?? s.client ?? "";
+};
+
+const acText = (ac: string | AcItem): string => {
+  if (typeof ac === "string") return ac;
+  return ac.scenario ?? ac.then ?? [ac.given, ac.when, ac.then].filter(Boolean).join(" ") ?? "";
+};
+
+const acId = (ac: string | AcItem, i: number): string => {
+  if (typeof ac === "string") return `AC ${i + 1}`;
+  return ac.id ?? `AC ${i + 1}`;
+};
+
+function parseStories(data: unknown): Story[] {
+  if (!data || typeof data !== "object") return [];
+  const d = data as Record<string, unknown>;
+  const arr = (Array.isArray(d.data) ? d.data : null)
+    ?? (Array.isArray(d.stories) ? d.stories : null)
+    ?? [];
+  return arr as Story[];
+}
+
+// ── Colour maps ───────────────────────────────────────────────────────────────
+
+const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   Bug:     { bg: "#fef2f2", text: "#dc2626", border: "#dc2626" },
   Story:   { bg: "#eff6ff", text: "#2563eb", border: "#2563eb" },
   Feature: { bg: "#f0fdf4", text: "#16a34a", border: "#16a34a" },
   Task:    { bg: "#fffbeb", text: "#d97706", border: "#d97706" },
 };
 
-const priorityColors: Record<string, string> = {
-  Critical: "#dc2626",
-  High:     "#ea580c",
-  Medium:   "#d97706",
-  Low:      "#16a34a",
+const PRIORITY_COLORS: Record<string, string> = {
+  Critical: "#dc2626", High: "#ea580c", Medium: "#d97706", Low: "#16a34a",
 };
 
-const defaultTypeColor = typeColors.Story;
+const fallbackColor = TYPE_COLORS.Story;
 
-/** Safely resolve a story's ID regardless of whether it comes from the DTO (id) or raw MongoDB (_id). */
-const sid = (story: Story): string => story._id ?? story.id ?? "";
+// ── Empty state ───────────────────────────────────────────────────────────────
 
-/** Parse review API payload — backend may use data, stories, or reviews key */
-function extractStoriesFromReviewResponse(payload: unknown): Story[] {
-  if (Array.isArray(payload)) return payload as Story[];
-  if (!payload || typeof payload !== "object") return [];
-
-  const body = payload as Record<string, unknown>;
-  if (Array.isArray(body.data)) return body.data as Story[];
-  if (Array.isArray(body.stories)) return body.stories as Story[];
-  if (Array.isArray(body.reviews)) return body.reviews as Story[];
-  return [];
-}
-
-// ── Empty state ──────────────────────────────────────────────────────────────
-
-function EmptyState({
-  icon,
-  title,
-  subtitle,
-  buttonText,
-  buttonAction,
-}: {
-  icon: string;
-  title: string;
-  subtitle: string;
-  buttonText?: string;
-  buttonAction?: () => void;
+function EmptyState({ icon, title, subtitle, buttonText, buttonAction }: {
+  icon: string; title: string; subtitle: string;
+  buttonText?: string; buttonAction?: () => void;
 }) {
   return (
     <div style={{ textAlign: "center", padding: 60 }}>
@@ -94,11 +104,7 @@ function EmptyState({
       <p style={{ fontSize: 16, color: "#64748b", fontWeight: 500, margin: "0 0 8px" }}>{title}</p>
       <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 20px" }}>{subtitle}</p>
       {buttonText && buttonAction && (
-        <button
-          type="button"
-          onClick={buttonAction}
-          style={{ backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", cursor: "pointer", fontSize: 14 }}
-        >
+        <button type="button" onClick={buttonAction} style={{ backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", cursor: "pointer", fontSize: 14 }}>
           {buttonText}
         </button>
       )}
@@ -106,51 +112,60 @@ function EmptyState({
   );
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 const ReviewQueuePage = () => {
-  const [activeTab, setActiveTab] = useState("slack");
+  const [activeTab, setActiveTab]             = useState("slack");
   const [slackStories, setSlackStories]       = useState<Story[]>([]);
   const [documentStories, setDocumentStories] = useState<Story[]>([]);
   const [adoStories, setAdoStories]           = useState<Story[]>([]);
   const [isLoading, setIsLoading]             = useState(true);
+  const [error, setError]                     = useState<string | null>(null);
   const [editingStory, setEditingStory]       = useState<Story | null>(null);
   const [isEditPanelOpen, setIsEditPanelOpen] = useState(false);
   const [editForm, setEditForm]               = useState<EditForm>({
     storyTitle: "", type: "Story", priority: "Medium",
     description: "", acceptanceCriteria: [], releaseNotes: "",
   });
-  const [expandedStories, setExpandedStories] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded]               = useState<Record<string, boolean>>({});
+
+  // ── Fetch ──────────────────────────────────────────────────────────────────
 
   const fetchAllStories = async () => {
     setIsLoading(true);
+    setError(null);
+    const pp = localStorage.getItem("activeProjectId") ? `&projectId=${localStorage.getItem("activeProjectId")}` : "";
+
     try {
-      const projectId = localStorage.getItem("activeProjectId") ?? "";
-      const pp = projectId ? `&projectId=${projectId}` : "";
-
-      // Single call for all pending stories — split into tabs by source on the frontend.
-      // This avoids multiple concurrent tunnel/CORS requests that can fail independently.
-      const res = await api.get(`/review${pp ? `?${pp.slice(1)}` : ""}`);
-      console.log("[ReviewQueue] raw response:", res.data);
-      const all = extractStoriesFromReviewResponse(res.data);
-
-      setSlackStories(all.filter((s) => !s.source || s.source === "slack" || s.source === "Slack"));
-      setDocumentStories(all.filter((s) => s.source === "document" || s.source === "doc"));
-
-      // Fetch approved stories for ADO tab separately
-      try {
-        const adoRes = await api.get(`/stories?status=approved${pp}`);
-        const adoAll: Story[] = adoRes.data.stories ?? [];
-        setAdoStories(adoAll);
-      } catch {
-        // ADO tab failing shouldn't break the main tabs
-        setAdoStories([]);
-      }
-    } catch (err) {
-      console.error("[ReviewQueue] fetch error:", err);
-    } finally {
-      setIsLoading(false);
+      // Fetch Slack stories
+      const slackRes = await api.get(`/review?source=slack${pp}`);
+      console.log("[ReviewQueue] slack response:", slackRes.data);
+      const slackData = parseStories(slackRes.data);
+      console.log("[ReviewQueue] slack stories count:", slackData.length);
+      setSlackStories(slackData);
+    } catch (e: unknown) {
+      console.error("[ReviewQueue] slack fetch failed:", e);
+      setSlackStories([]);
     }
+
+    try {
+      // Fetch Document stories
+      const docRes = await api.get(`/review?source=document${pp}`);
+      setDocumentStories(parseStories(docRes.data));
+    } catch {
+      setDocumentStories([]);
+    }
+
+    try {
+      // Fetch ADO (approved) stories
+      const adoRes = await api.get(`/stories?status=approved${pp}`);
+      const adoData = parseStories(adoRes.data) as Story[];
+      setAdoStories(adoData);
+    } catch {
+      setAdoStories([]);
+    }
+
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -162,6 +177,12 @@ const ReviewQueuePage = () => {
       window.removeEventListener("project-changed", fetchAllStories);
     };
   }, []);
+
+  useEffect(() => {
+    console.log("[ReviewQueue] slackStories updated:", slackStories.length);
+  }, [slackStories]);
+
+  // ── Actions ────────────────────────────────────────────────────────────────
 
   const handleApprove = async (storyId: string) => {
     try {
@@ -183,20 +204,19 @@ const ReviewQueuePage = () => {
 
   const handleEditClick = (story: Story) => {
     setEditingStory(story);
-    const rawAcs = story.acceptanceCriteriaFormatted?.length
+    const acs = (story.acceptanceCriteriaFormatted?.length
       ? story.acceptanceCriteriaFormatted
-      : (story.acceptanceCriteria ?? []).map((ac, i) => ({
-          id: `AC ${i + 1}`,
-          scenario: typeof ac === "string" ? ac : ac.scenario ?? "",
-        }));
+      : (story.acceptanceCriteria ?? [])
+    ).map((ac, i) => ({
+      id: acId(ac, i),
+      scenario: acText(ac),
+    }));
     setEditForm({
-      storyTitle:         story.storyTitle ?? story.title ?? "",
-      type:               story.type ?? "Story",
-      priority:           story.priority ?? "Medium",
-      description:        story.description ?? "",
-      acceptanceCriteria: rawAcs.map((ac) =>
-        typeof ac === "string" ? { id: "", scenario: ac } : ac
-      ),
+      storyTitle: story.storyTitle ?? story.title ?? "",
+      type: story.type ?? "Story",
+      priority: story.priority ?? "Medium",
+      description: story.description ?? "",
+      acceptanceCriteria: acs,
       releaseNotes: story.releaseNotes ?? "",
     });
     setIsEditPanelOpen(true);
@@ -206,14 +226,14 @@ const ReviewQueuePage = () => {
     if (!editingStory) return;
     try {
       await api.patch(`/stories/${sid(editingStory)}`, {
-        title:                      editForm.storyTitle,
-        storyTitle:                 editForm.storyTitle,
-        type:                       editForm.type,
-        priority:                   editForm.priority,
-        description:                editForm.description,
-        acceptanceCriteria:         editForm.acceptanceCriteria.map((ac) => ac.scenario),
+        title: editForm.storyTitle,
+        storyTitle: editForm.storyTitle,
+        type: editForm.type,
+        priority: editForm.priority,
+        description: editForm.description,
+        acceptanceCriteria: editForm.acceptanceCriteria.map((ac) => ac.scenario),
         acceptanceCriteriaFormatted: editForm.acceptanceCriteria,
-        releaseNotes:               editForm.releaseNotes,
+        releaseNotes: editForm.releaseNotes,
       });
       setIsEditPanelOpen(false);
       fetchAllStories();
@@ -223,94 +243,66 @@ const ReviewQueuePage = () => {
   };
 
   const toggleExpand = (id: string) =>
-    setExpandedStories((prev) => ({ ...prev, [id]: !prev[id] }));
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   // ── Story card ─────────────────────────────────────────────────────────────
 
   const renderStoryCard = (story: Story, tabSource: string) => {
-    const tc = typeColors[story.type] ?? defaultTypeColor;
-    const storyId = sid(story);
-    const isExpanded = expandedStories[storyId];
-    const acItems: AcItem[] = (story.acceptanceCriteriaFormatted?.length
+    const storyId   = sid(story);
+    const tc        = TYPE_COLORS[story.type] ?? fallbackColor;
+    const isOpen    = expanded[storyId];
+    const acs: (string | AcItem)[] = story.acceptanceCriteriaFormatted?.length
       ? story.acceptanceCriteriaFormatted
-      : (story.acceptanceCriteria ?? []).map((ac, i) => ({
-          id: `AC ${i + 1}`,
-          scenario: typeof ac === "string" ? ac : ac.scenario ?? "",
-        }))
-    ).map((ac) => (typeof ac === "string" ? { id: "", scenario: ac } : ac));
+      : (story.acceptanceCriteria ?? []);
+    const name = clientName(story);
 
     return (
-      <div
-        key={storyId}
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 12,
-          border: "1px solid #e2e8f0",
-          overflow: "hidden",
-          borderLeft: `4px solid ${tc.border}`,
-          marginBottom: 16,
-        }}
-      >
+      <div key={storyId} style={{ backgroundColor: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", borderLeft: `4px solid ${tc.border}`, marginBottom: 16, overflow: "hidden" }}>
         <div style={{ padding: "16px 20px" }}>
-          {/* Badge row */}
+
+          {/* Badges */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-            <span style={{ backgroundColor: tc.bg, color: tc.text, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
-              {story.type}
-            </span>
+            <span style={{ backgroundColor: tc.bg, color: tc.text, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{story.type}</span>
             <span style={{ backgroundColor: "#f1f5f9", color: "#475569", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
-              DP-{storyId.slice(-4).toUpperCase()}
+              {story.ticketId ?? `DP-${storyId.slice(-4).toUpperCase()}`}
             </span>
-            <span style={{ backgroundColor: "#f0f0ff", color: "#6d28d9", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
-              ✨ AI Generated
-            </span>
-            <span style={{ backgroundColor: (priorityColors[story.priority] ?? "#94a3b8") + "20", color: priorityColors[story.priority] ?? "#94a3b8", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
-              {story.priority}
-            </span>
-            {tabSource === "slack" && (
-              <span style={{ backgroundColor: "#f8f0ff", color: "#7c3aed", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #e9d5ff" }}>💬 Slack</span>
+            {story.isAIGenerated !== false && (
+              <span style={{ backgroundColor: "#f0f0ff", color: "#6d28d9", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>✨ AI</span>
             )}
-            {tabSource === "document" && (
-              <span style={{ backgroundColor: "#fff7ed", color: "#c2410c", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #fed7aa" }}>📄 Document</span>
-            )}
+            <span style={{ backgroundColor: (PRIORITY_COLORS[story.priority] ?? "#94a3b8") + "20", color: PRIORITY_COLORS[story.priority] ?? "#94a3b8", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{story.priority}</span>
+            {tabSource === "slack" && <span style={{ backgroundColor: "#f8f0ff", color: "#7c3aed", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #e9d5ff" }}>💬 Slack</span>}
+            {tabSource === "document" && <span style={{ backgroundColor: "#fff7ed", color: "#c2410c", padding: "2px 10px", borderRadius: 999, fontSize: 12, border: "1px solid #fed7aa" }}>📄 Document</span>}
           </div>
 
           {/* Title */}
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", margin: "0 0 8px" }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", margin: "0 0 8px", lineHeight: 1.4 }}>
             {story.storyTitle ?? story.title}
           </h3>
 
           {/* Description */}
           {story.description && (
-            <p style={{ fontSize: 13, color: "#475569", margin: "0 0 12px", lineHeight: 1.6 }}>
-              {story.description}
-            </p>
+            <p style={{ fontSize: 13, color: "#475569", margin: "0 0 10px", lineHeight: 1.6 }}>{story.description}</p>
           )}
 
-          {/* Original quote */}
+          {/* Client quote */}
           {story.sourceQuote && (
-            <div style={{ backgroundColor: "#f8fafc", borderLeft: "3px solid #cbd5e1", padding: "8px 12px", borderRadius: "0 6px 6px 0", marginBottom: 12 }}>
-              <p style={{ fontSize: 12, color: "#64748b", fontStyle: "italic", margin: 0 }}>
-                💬 Client said: "{story.sourceQuote}"
-              </p>
+            <div style={{ backgroundColor: "#f8fafc", borderLeft: "3px solid #cbd5e1", padding: "8px 12px", borderRadius: "0 6px 6px 0", marginBottom: 10 }}>
+              <p style={{ fontSize: 12, color: "#64748b", fontStyle: "italic", margin: 0 }}>💬 "{story.sourceQuote}"</p>
             </div>
           )}
 
-          {/* Acceptance criteria (collapsible) */}
-          {acItems.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <button
-                type="button"
-                onClick={() => toggleExpand(storyId)}
-                style={{ background: "none", border: "none", color: "#0088ff", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}
-              >
-                {isExpanded ? "▼" : "▶"} Acceptance Criteria ({acItems.length})
+          {/* Acceptance Criteria — collapsible */}
+          {acs.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <button type="button" onClick={() => toggleExpand(storyId)}
+                style={{ background: "none", border: "none", color: "#0088ff", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
+                {isOpen ? "▼" : "▶"} Acceptance Criteria ({acs.length})
               </button>
-              {isExpanded && (
+              {isOpen && (
                 <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                  {acItems.map((ac, i) => (
+                  {acs.map((ac, i) => (
                     <div key={i} style={{ backgroundColor: "#f8fafc", borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "#374151", lineHeight: 1.6 }}>
-                      <span style={{ fontWeight: 700, color: "#0088ff" }}>{ac.id || `AC ${i + 1}`}:</span>{" "}
-                      {ac.scenario}
+                      <span style={{ fontWeight: 700, color: "#0088ff" }}>{acId(ac, i)}:</span>{" "}{acText(ac)}
                     </div>
                   ))}
                 </div>
@@ -318,24 +310,24 @@ const ReviewQueuePage = () => {
             </div>
           )}
 
-          {/* Release notes (when expanded) */}
-          {story.releaseNotes && isExpanded && (
-            <div style={{ backgroundColor: "#f0fdf4", borderRadius: 6, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "#166534" }}>
+          {/* Release notes — when expanded */}
+          {story.releaseNotes && isOpen && (
+            <div style={{ backgroundColor: "#f0fdf4", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#166534" }}>
               <span style={{ fontWeight: 600 }}>📋 Release Notes: </span>{story.releaseNotes}
             </div>
           )}
 
-          {/* Footer row */}
+          {/* Footer */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #f1f5f9" }}>
             <div style={{ fontSize: 12, color: "#94a3b8" }}>
-              {story.clientId?.name && <span style={{ marginRight: 12 }}>👤 {story.clientId.name}</span>}
-              {story.projectId?.name && <span style={{ marginRight: 12 }}>📁 {story.projectId.name}</span>}
-              🕐 {new Date(story.createdAt ?? Date.now()).toLocaleDateString()}
+              {name && <span style={{ marginRight: 12 }}>👤 {name}</span>}
+              <span>🕐 {story.timeAgo ?? new Date(story.createdAt ?? Date.now()).toLocaleDateString()}</span>
+              {story.regressionWarning && <span style={{ marginLeft: 12, color: "#f59e0b" }}>⚠ {story.regressionWarning}</span>}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" onClick={() => handleEditClick(story)} style={{ padding: "6px 16px", backgroundColor: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
-              <button type="button" onClick={() => handleReject(storyId)} style={{ padding: "6px 16px", backgroundColor: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
-              <button type="button" onClick={() => handleApprove(storyId)} style={{ padding: "6px 16px", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Approve</button>
+              <button type="button" onClick={() => handleEditClick(story)} style={{ padding: "6px 14px", backgroundColor: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
+              <button type="button" onClick={() => handleReject(storyId)} style={{ padding: "6px 14px", backgroundColor: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
+              <button type="button" onClick={() => handleApprove(storyId)} style={{ padding: "6px 14px", backgroundColor: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Approve</button>
             </div>
           </div>
         </div>
@@ -349,34 +341,21 @@ const ReviewQueuePage = () => {
     <div key={sid(story)} style={{ backgroundColor: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: "16px 20px", borderLeft: "4px solid #16a34a", marginBottom: 16 }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         <span style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>✅ Approved</span>
-        {story.adoId && (
-          <span style={{ backgroundColor: "#eff6ff", color: "#2563eb", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>ADO #{story.adoId}</span>
-        )}
+        {story.adoId && <span style={{ backgroundColor: "#eff6ff", color: "#2563eb", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>ADO #{story.adoId}</span>}
         <span style={{ backgroundColor: "#f1f5f9", color: "#64748b", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>{story.type}</span>
-        <span style={{ backgroundColor: (priorityColors[story.priority] ?? "#94a3b8") + "20", color: priorityColors[story.priority] ?? "#94a3b8", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>
-          {story.priority}
-        </span>
+        <span style={{ backgroundColor: (PRIORITY_COLORS[story.priority] ?? "#94a3b8") + "20", color: PRIORITY_COLORS[story.priority] ?? "#94a3b8", padding: "2px 10px", borderRadius: 999, fontSize: 12 }}>{story.priority}</span>
       </div>
-      <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", margin: "0 0 8px" }}>
-        {story.storyTitle ?? story.title}
-      </h3>
-      {story.description && (
-        <p style={{ fontSize: 13, color: "#475569", margin: "0 0 12px" }}>{story.description}</p>
-      )}
+      <h3 style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", margin: "0 0 8px" }}>{story.storyTitle ?? story.title}</h3>
+      {story.description && <p style={{ fontSize: 13, color: "#475569", margin: "0 0 12px" }}>{story.description}</p>}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 12, color: "#94a3b8" }}>
           Approved {new Date(story.approvedAt ?? story.updatedAt ?? Date.now()).toLocaleDateString()}
         </span>
-        {story.adoId && (
-          <a href="#" style={{ color: "#0088ff", fontSize: 13, textDecoration: "none", fontWeight: 500 }}>
-            View in ADO →
-          </a>
-        )}
       </div>
     </div>
   );
 
-  // ── Tabs config ────────────────────────────────────────────────────────────
+  // ── Tabs ───────────────────────────────────────────────────────────────────
 
   const tabs = [
     { key: "slack",    label: "Slack Messages", count: slackStories.length,    icon: "💬" },
@@ -388,19 +367,15 @@ const ReviewQueuePage = () => {
 
   return (
     <AppShell pageTitle="Review Queue">
-      <div style={{ margin: "-24px", display: "flex", flexDirection: "column", height: "calc(100vh - 60px)" }}>
+      <div style={{ margin: "-24px", display: "flex", flexDirection: "column", minHeight: "calc(100vh - 60px)" }}>
 
         {/* Header */}
         <div style={{ backgroundColor: "#fff", borderBottom: "1px solid #e2e8f0", padding: "16px 24px", flexShrink: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div>
-              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#1e293b", margin: 0 }}>Review Queue</h1>
-              <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
-                Review and approve AI-generated stories before pushing to ADO
-              </p>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 24, marginTop: 12 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: "#1e293b", margin: 0 }}>Review Queue</h1>
+          <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 8px" }}>
+            Review and approve AI-generated stories before pushing to ADO
+          </p>
+          <div style={{ display: "flex", gap: 24 }}>
             <span style={{ fontSize: 13, color: "#f59e0b", fontWeight: 500 }}>
               ⏳ {slackStories.length + documentStories.length} Pending
             </span>
@@ -410,38 +385,21 @@ const ReviewQueuePage = () => {
           </div>
         </div>
 
-        {/* Tab bar */}
+        {/* Tabs */}
         <div style={{ backgroundColor: "#fff", borderBottom: "1px solid #e2e8f0", display: "flex", padding: "0 24px", flexShrink: 0 }}>
           {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              style={{
-                padding: "14px 20px",
-                fontSize: 14,
-                fontWeight: activeTab === tab.key ? 600 : 500,
-                cursor: "pointer",
-                border: "none",
-                borderBottom: activeTab === tab.key ? "2px solid #0088ff" : "2px solid transparent",
-                color: activeTab === tab.key ? "#0088ff" : "#64748b",
-                backgroundColor: "transparent",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: -1,
-              }}
-            >
+            <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)} style={{
+              padding: "14px 20px", fontSize: 14,
+              fontWeight: activeTab === tab.key ? 600 : 400,
+              cursor: "pointer", border: "none",
+              borderBottom: activeTab === tab.key ? "2px solid #0088ff" : "2px solid transparent",
+              color: activeTab === tab.key ? "#0088ff" : "#64748b",
+              backgroundColor: "transparent",
+              display: "flex", alignItems: "center", gap: 8, marginBottom: -1,
+            }}>
               <span>{tab.icon}</span>
               <span>{tab.label}</span>
-              <span style={{
-                backgroundColor: activeTab === tab.key ? "#eff6ff" : "#f1f5f9",
-                color: activeTab === tab.key ? "#0088ff" : "#64748b",
-                borderRadius: 999,
-                padding: "1px 8px",
-                fontSize: 12,
-                fontWeight: 600,
-              }}>
+              <span style={{ backgroundColor: activeTab === tab.key ? "#eff6ff" : "#f1f5f9", color: activeTab === tab.key ? "#0088ff" : "#64748b", borderRadius: 999, padding: "1px 8px", fontSize: 12, fontWeight: 600 }}>
                 {tab.count}
               </span>
             </button>
@@ -454,11 +412,18 @@ const ReviewQueuePage = () => {
             <div style={{ textAlign: "center", padding: 60, color: "#64748b" }}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>⏳</div>Loading stories…
             </div>
+          ) : error ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#dc2626" }}>
+              <p style={{ fontSize: 15, fontWeight: 600 }}>⚠ {error}</p>
+              <button type="button" onClick={fetchAllStories} style={{ marginTop: 12, padding: "8px 20px", backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>
+                Retry
+              </button>
+            </div>
           ) : (
             <>
               {activeTab === "slack" && (
                 slackStories.length === 0
-                  ? <EmptyState icon="💬" title="No Slack stories pending review" subtitle="Stories appear here when clients send messages in Slack" />
+                  ? <EmptyState icon="💬" title="No Slack stories pending review" subtitle="Stories appear here when clients send messages in monitored Slack channels" />
                   : slackStories.map((s) => renderStoryCard(s, "slack"))
               )}
               {activeTab === "document" && (
@@ -468,7 +433,7 @@ const ReviewQueuePage = () => {
               )}
               {activeTab === "ado" && (
                 adoStories.length === 0
-                  ? <EmptyState icon="✅" title="No stories pushed to ADO yet" subtitle="Approve stories from Slack or Documents tab to push to ADO" />
+                  ? <EmptyState icon="✅" title="No stories pushed to ADO yet" subtitle="Approve stories from the Slack or Documents tab to push them to ADO" />
                   : adoStories.map((s) => renderAdoCard(s))
               )}
             </>
@@ -478,33 +443,28 @@ const ReviewQueuePage = () => {
 
       {/* Overlay */}
       {isEditPanelOpen && (
-        <div
-          role="presentation"
-          onClick={() => setIsEditPanelOpen(false)}
-          style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.3)", zIndex: 99 }}
-        />
+        <div role="presentation" onClick={() => setIsEditPanelOpen(false)}
+          style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.3)", zIndex: 99 }} />
       )}
 
       {/* Edit panel */}
       {isEditPanelOpen && (
         <div style={{ position: "fixed", right: 0, top: 0, width: 580, height: "100vh", backgroundColor: "#fff", boxShadow: "-4px 0 20px rgba(0,0,0,0.1)", zIndex: 100, display: "flex", flexDirection: "column" }}>
-          {/* Panel header */}
           <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "#1e293b" }}>Edit Story</h2>
             <button type="button" onClick={() => setIsEditPanelOpen(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#64748b" }}>×</button>
           </div>
 
-          {/* Panel body */}
           <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
             {/* Story Title */}
-            <div style={{ marginBottom: 18 }}>
+            <div style={{ marginBottom: 16 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Story Title</label>
               <input value={editForm.storyTitle} onChange={(e) => setEditForm({ ...editForm, storyTitle: e.target.value })}
                 style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }} />
             </div>
 
             {/* Type + Priority */}
-            <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
+            <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Type</label>
                 <select value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
@@ -522,58 +482,49 @@ const ReviewQueuePage = () => {
             </div>
 
             {/* Description */}
-            <div style={{ marginBottom: 18 }}>
+            <div style={{ marginBottom: 16 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Description & Value Statement</label>
               <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
                 placeholder="As a [user] I need [what] So that [value]"
                 style={{ width: "100%", height: 100, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
             </div>
 
-            {/* Acceptance Criteria */}
-            <div style={{ marginBottom: 18 }}>
+            {/* ACs */}
+            <div style={{ marginBottom: 16 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Acceptance Criteria</label>
               {editForm.acceptanceCriteria.map((ac, idx) => (
                 <div key={idx} style={{ marginBottom: 10 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "#0088ff", marginBottom: 4 }}>{ac.id || `AC ${idx + 1}`}</div>
-                  <textarea
-                    value={ac.scenario}
+                  <textarea value={ac.scenario}
                     onChange={(e) => {
                       const updated = [...editForm.acceptanceCriteria];
                       updated[idx] = { ...updated[idx], scenario: e.target.value };
                       setEditForm({ ...editForm, acceptanceCriteria: updated });
                     }}
                     placeholder="Given [context] When [action] Then [result]"
-                    style={{ width: "100%", height: 72, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, resize: "vertical", boxSizing: "border-box" }}
-                  />
+                    style={{ width: "100%", height: 72, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, resize: "vertical", boxSizing: "border-box" }} />
                 </div>
               ))}
-              <button
-                type="button"
+              <button type="button"
                 onClick={() => setEditForm({ ...editForm, acceptanceCriteria: [...editForm.acceptanceCriteria, { id: `AC ${editForm.acceptanceCriteria.length + 1}`, scenario: "" }] })}
-                style={{ border: "1px dashed #0088ff", color: "#0088ff", background: "transparent", borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 13, width: "100%" }}
-              >
+                style={{ border: "1px dashed #0088ff", color: "#0088ff", background: "transparent", borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 13, width: "100%" }}>
                 + Add Acceptance Criteria
               </button>
             </div>
 
             {/* Release Notes */}
-            <div style={{ marginBottom: 18 }}>
+            <div style={{ marginBottom: 16 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Release Notes</label>
               <textarea value={editForm.releaseNotes} onChange={(e) => setEditForm({ ...editForm, releaseNotes: e.target.value })}
                 style={{ width: "100%", height: 80, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
             </div>
           </div>
 
-          {/* Panel footer */}
           <div style={{ padding: "16px 24px", borderTop: "1px solid #e2e8f0", display: "flex", gap: 12, justifyContent: "flex-end" }}>
             <button type="button" onClick={() => setIsEditPanelOpen(false)}
-              style={{ padding: "10px 24px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", cursor: "pointer", fontSize: 14 }}>
-              Cancel
-            </button>
+              style={{ padding: "10px 24px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", cursor: "pointer", fontSize: 14 }}>Cancel</button>
             <button type="button" onClick={handleSaveEdit}
-              style={{ padding: "10px 24px", backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
-              Save Changes
-            </button>
+              style={{ padding: "10px 24px", backgroundColor: "#0088ff", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>Save Changes</button>
           </div>
         </div>
       )}
