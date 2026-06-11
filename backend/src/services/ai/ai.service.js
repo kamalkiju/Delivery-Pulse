@@ -142,9 +142,9 @@ Return ONLY the JSON object above with all fields filled in properly.`;
   }
 
   try {
-    console.log("[ai] using model: claude-haiku-4-5");
+    console.log("[ai] using model: claude-haiku-4-5-20251001");
     const response = await claude.messages.create({
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1000,
       messages: [{ role: "user", content }],
     });

@@ -62,7 +62,7 @@ export const uploadDocument = async (req, res) => {
       });
     }
 
-    const maxChars = 20000;
+    const maxChars = 30000;
     const truncatedText =
       documentText.length > maxChars
         ? documentText.substring(0, maxChars) + "\n\n[Document truncated]"
@@ -102,7 +102,7 @@ Return ONLY JSON. No markdown.`;
     console.log("[document] Sending to Claude AI (haiku)...");
 
     const makeRequest = () => getClaudeClient().messages.create({
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 4000,
       messages: [{ role: "user", content: prompt }],
     });
