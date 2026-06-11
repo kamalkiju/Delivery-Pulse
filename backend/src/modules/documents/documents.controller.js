@@ -82,7 +82,7 @@ export const uploadDocument = async (req, res) => {
     console.log("[document] Total text length:", documentText.length);
 
     // ── Split into chunks ─────────────────────────────────────────────────────
-    const CHUNK_SIZE = 12000;
+    const CHUNK_SIZE = 6000;
     const chunks = [];
     for (let i = 0; i < documentText.length; i += CHUNK_SIZE) {
       chunks.push(documentText.substring(i, i + CHUNK_SIZE));
@@ -102,48 +102,77 @@ export const uploadDocument = async (req, res) => {
 
       console.log(`[document] Processing chunk ${idx + 1}/${chunks.length}`);
 
-      const prompt = `You are a senior Business Analyst. Extract ALL user stories from this document section.
+      const prompt = `Extract user stories from this document section as JSON.
 
-IMPORTANT: Return ONLY raw JSON. No markdown. No code blocks. Start with { end with }
+Return ONLY this JSON structure, nothing else:
+{"stories":[{"storyTitle":"Epic > Feature","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X","sprint":"Current"}]}
 
-${isFirst ? "This is the beginning of the document." : `This is section ${idx + 1} of ${chunks.length}.`}
-${isLast ? "This is the last section." : "More sections follow."}
+Extract every requirement. Return raw JSON only.
 
-Return this exact JSON structure:
-{"documentSummary":"brief summary","documentTitle":"title","stories":[{"storyTitle":"Epic > Feature","type":"Story","priority":"Medium","description":"As a user I need X So that Y","acceptanceCriteria":[{"id":"AC 1","scenario":"Given X When Y Then Z"},{"id":"AC 2","scenario":"Given X When Y Then Z"},{"id":"AC 3","scenario":"Given X When Y Then Z"}],"releaseNotes":"We introduced X to solve Y","sprint":"Current"}]}
-
-RULES:
-- Extract EVERY requirement as a separate story — do not skip any
-- Minimum 3 acceptance criteria per story in Given/When/Then format
-- Description must be "As a X I need Y So that Z"
-- No markdown, no code blocks, raw JSON only
-
-Document section ${idx + 1}:
-${chunk}`;
+Section ${idx + 1}/${chunks.length}:
+${chunk.substring(0, CHUNK_SIZE)}`;
 
       let attempt = 0;
       while (attempt < 2) {
         try {
           const response = await claude.messages.create({
-            model: "claude-haiku-4-5-20251001",
+            model: "claude-haiku-4-5",
             max_tokens: 4000,
             messages: [{ role: "user", content: prompt }],
           });
 
-          const parsed = parseChunkResponse(response.content[0].text);
-          if (parsed?.stories && Array.isArray(parsed.stories)) {
-            allStories = allStories.concat(parsed.stories);
-            console.log(
-              `[document] Chunk ${idx + 1} → ${parsed.stories.length} stories. Total: ${allStories.length}`
-            );
-            if (isFirst && parsed.documentSummary) {
-              documentSummary = parsed.documentSummary;
-              documentTitle = parsed.documentTitle || documentTitle;
-            }
-          } else {
-            console.warn(`[document] Chunk ${idx + 1} returned no parseable stories`);
+          const responseText = response.content[0].text;
+          console.log(`[document] Chunk ${idx + 1} response length:`, responseText.length);
+          console.log(`[document] Chunk ${idx + 1} first 300 chars:`, responseText.substring(0, 300));
+          console.log(`[document] Chunk ${idx + 1} last 100 chars:`, responseText.substring(responseText.length - 100));
+
+          // Strip markdown fences
+          let cleanJson = responseText.trim()
+            .replace(/^```json\s*/i, "")
+            .replace(/^```\s*/i, "")
+            .replace(/\s*```$/i, "")
+            .trim();
+
+          console.log(`[document] Clean json starts with:`, cleanJson.substring(0, 50));
+
+          const jsonStart = cleanJson.indexOf("{");
+          const jsonEnd = cleanJson.lastIndexOf("}");
+          console.log(`[document] jsonStart: ${jsonStart}, jsonEnd: ${jsonEnd}`);
+
+          if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
+            console.log(`[document] Chunk ${idx + 1} — no valid JSON brackets found`);
+            break;
+          }
+
+          const jsonStr = cleanJson.substring(jsonStart, jsonEnd + 1);
+          console.log(`[document] Extracted JSON length:`, jsonStr.length);
+
+          let chunkAnalysis;
+          try {
+            chunkAnalysis = JSON.parse(jsonStr);
+            console.log(`[document] Parse success, stories:`, chunkAnalysis.stories?.length);
+          } catch (parseErr) {
+            console.error(`[document] Parse error:`, parseErr.message);
+            const errPos = parseInt(parseErr.message.match(/\d+/)?.[0] || "0");
+            console.error(`[document] JSON near error:`, jsonStr.substring(Math.max(0, errPos - 50), errPos + 50));
+            break;
+          }
+
+          if (!chunkAnalysis?.stories?.length) {
+            console.log(`[document] Chunk ${idx + 1} — parsed but no stories found`);
+            console.log(`[document] Keys in response:`, Object.keys(chunkAnalysis || {}));
+            break;
+          }
+
+          allStories = allStories.concat(chunkAnalysis.stories);
+          console.log(`[document] Chunk ${idx + 1} → ${chunkAnalysis.stories.length} stories. Total: ${allStories.length}`);
+
+          if (isFirst && chunkAnalysis.documentSummary) {
+            documentSummary = chunkAnalysis.documentSummary;
+            documentTitle = chunkAnalysis.documentTitle || documentTitle;
           }
           break; // success — move to next chunk
+
         } catch (err) {
           if (err.status === 429) {
             console.log(`[document] Rate limit on chunk ${idx + 1} — waiting 30s...`);
