@@ -104,6 +104,12 @@ const storySchema = new mongoose.Schema({
   // Azure DevOps work item ID after push
   adoId: {
     type: String,
+    default: null,
+  },
+
+  adoUrl: {
+    type: String,
+    default: null,
   },
 
   projectId: {

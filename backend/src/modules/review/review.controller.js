@@ -89,6 +89,7 @@ export function toReviewStoryDto(doc) {
     approvedAt: doc.approvedAt,
     updatedAt: doc.updatedAt,
     adoId: doc.adoId ?? null,
+    adoUrl: doc.adoUrl ?? null,
     timeAgo: formatTimeAgo(doc.createdAt),
     regressionWarning: doc.regressionOf
       ? "Possible regression of a prior story"

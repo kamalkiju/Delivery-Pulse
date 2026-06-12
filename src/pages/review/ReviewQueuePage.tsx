@@ -36,6 +36,7 @@ interface Story {
   businessRequirement?: string;
   validations?: string[];
   adoId?: string;
+  adoUrl?: string;
   approvedAt?: string;
   updatedAt?: string;
   createdAt?: string;
@@ -378,8 +379,8 @@ const ReviewQueuePage = () => {
     }
 
     try {
-      // Fetch ADO (approved) stories
-      const adoRes = await api.get(`/stories?status=approved${pp}`);
+      // Fetch ADO (pushed) stories
+      const adoRes = await api.get(`/stories?status=pushed-to-ado${pp}`);
       const adoData = parseStories(adoRes.data) as Story[];
       setAdoStories(adoData);
     } catch {
@@ -407,9 +408,23 @@ const ReviewQueuePage = () => {
 
   const handleApprove = async (storyId: string) => {
     try {
-      await api.patch(`/stories/${storyId}/approve`);
+      const response = await api.patch(`/stories/${storyId}/approve`);
+      const { adoId, adoUrl, message } = response.data;
+
+      if (adoId && adoUrl) {
+        const openADO = window.confirm(
+          `✅ ${message}\n\nClick OK to view in Azure DevOps`,
+        );
+        if (openADO) {
+          window.open(adoUrl, "_blank");
+        }
+      } else {
+        alert("✅ Story approved successfully");
+      }
+
       fetchAllStories();
-    } catch {
+    } catch (error) {
+      console.error("Approve error:", error);
       alert("Failed to approve story");
     }
   };
@@ -532,6 +547,28 @@ const ReviewQueuePage = () => {
         <span style={{ fontSize: 12, color: "#94a3b8" }}>
           Approved {new Date(story.approvedAt ?? story.updatedAt ?? Date.now()).toLocaleDateString()}
         </span>
+        {story.adoId && (
+          <a
+            href={story.adoUrl ||
+              `https://dev.azure.com/kamal02211994/Delivery%20pulse/_workitems/edit/${story.adoId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              backgroundColor: "#0078d4",
+              color: "white",
+              padding: "6px 14px",
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 500,
+              textDecoration: "none",
+            }}
+          >
+            View in ADO #{story.adoId} ↗
+          </a>
+        )}
       </div>
     </div>
   );

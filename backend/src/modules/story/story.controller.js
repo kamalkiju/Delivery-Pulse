@@ -48,44 +48,72 @@ export async function getStories(req, res) {
 /**
  * approveStory — PATCH /api/stories/:id/approve
  *
- * Called when the BA clicks Approve in the Review Queue.
- *
- * What happens:
- *   1. Find the story by id from the URL (req.params.id)
- *   2. Set status → "approved", approvedBy → logged-in user, approvedAt → now
- *   3. Push work item to Azure DevOps (via story.service)
- *   4. Return the updated story JSON to the frontend
+ * Approves the story and pushes to Azure DevOps when configured.
  */
-export async function approveStory(req, res) {
+export const approveStory = async (req, res) => {
   try {
-    const storyId = req.params.id;
-    const approvedById = req.user?.userId ?? req.user?.id;
+    const story = await Story.findById(req.params.id)
+      .populate("clientId");
 
-    if (!approvedById) {
-      return res.status(401).json({
+    if (!story) {
+      return res.status(404).json({
         success: false,
-        message: "User id missing from session",
+        message: "Story not found",
       });
     }
 
-    // story.service also updates ADO + Teams after marking approved
-    const story = await storyService.approveStory(storyId, approvedById);
+    story.status = "approved";
+    story.approvedBy = req.user?.userId ?? req.user?.id;
+    story.approvedAt = new Date();
 
-    return res.status(200).json({
+    let adoId = null;
+    let adoUrl = null;
+
+    if (process.env.ADO_ORG &&
+        process.env.ADO_PROJECT &&
+        process.env.ADO_TOKEN) {
+      try {
+        console.log("[story] Pushing to ADO...");
+        const { createADOWorkItem } = await import(
+          "../../services/ado/ado.service.js"
+        );
+        adoId = await createADOWorkItem(story);
+        story.adoId = String(adoId);
+        story.status = "pushed-to-ado";
+
+        const org = process.env.ADO_ORG;
+        const project = encodeURIComponent(process.env.ADO_PROJECT);
+        adoUrl = `https://dev.azure.com/${org}/${project}/_workitems/edit/${adoId}`;
+        story.adoUrl = adoUrl;
+
+        console.log("[story] ADO work item created:", adoId);
+        console.log("[story] ADO URL:", adoUrl);
+      } catch (adoError) {
+        console.error("[story] ADO push failed:", adoError.message);
+      }
+    } else {
+      console.log("[story] ADO not configured - approving without ADO push");
+    }
+
+    await story.save();
+
+    res.json({
       success: true,
-      story: toReviewStoryDto({
-        ...story.toObject(),
-        status: story.status,
-      }),
+      story,
+      adoId,
+      adoUrl,
+      message: adoId
+        ? `Story approved and created in ADO as #${adoId}`
+        : "Story approved successfully",
     });
   } catch (error) {
-    const status = error.statusCode ?? 500;
-    return res.status(status).json({
+    console.error("[story] Approve error:", error);
+    res.status(500).json({
       success: false,
-      message: error.message ?? "Failed to approve story",
+      message: error.message,
     });
   }
-}
+};
 
 /**
  * rejectStory — PATCH /api/stories/:id/reject
