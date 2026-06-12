@@ -66,6 +66,12 @@ export const approveStory = async (req, res) => {
       });
     }
 
+    console.log("[approve] Story found:", story.storyTitle);
+    console.log("[approve] Checking ADO env vars...");
+    console.log("[approve] ADO_ORG:", process.env.ADO_ORG || "NOT SET");
+    console.log("[approve] ADO_PROJECT:", process.env.ADO_PROJECT || "NOT SET");
+    console.log("[approve] ADO_TOKEN:", process.env.ADO_TOKEN ? "SET" : "NOT SET");
+
     story.status = "approved";
     story.approvedAt = new Date();
 
@@ -76,29 +82,41 @@ export const approveStory = async (req, res) => {
     const adoProject = process.env.ADO_PROJECT;
     const adoToken = process.env.ADO_TOKEN;
 
-    console.log("[approve] ADO configured:",
-      adoOrg ? "YES" : "NO",
-      adoProject ? "YES" : "NO",
-      adoToken ? "YES" : "NO",
-    );
-
     if (adoOrg && adoProject && adoToken) {
+      console.log("[approve] ADO configured - attempting push...");
       try {
-        const { createADOWorkItem } = await import(
-          "../../services/ado/ado.service.js"
-        );
+        const adoModule = await import("../../services/ado/ado.service.js");
+        const createADOWorkItem =
+          adoModule.createADOWorkItem || adoModule.default?.createADOWorkItem;
+
+        console.log("[approve] createADOWorkItem function:", typeof createADOWorkItem);
+
+        if (typeof createADOWorkItem !== "function") {
+          throw new Error("createADOWorkItem is not exported from ado.service.js");
+        }
+
         adoId = await createADOWorkItem(story);
+
+        console.log("[approve] ADO work item created:", adoId);
+
         story.adoId = String(adoId);
         story.status = "pushed-to-ado";
         adoUrl = `https://dev.azure.com/${adoOrg}/${encodeURIComponent(adoProject)}/_workitems/edit/${adoId}`;
         story.adoUrl = adoUrl;
-        console.log("[approve] ADO work item created:", adoId);
       } catch (adoError) {
-        console.error("[approve] ADO failed:", adoError.message);
+        console.error("[approve] ADO push FAILED:", adoError.message);
+        console.error("[approve] ADO error stack:", adoError.stack);
       }
+    } else {
+      console.log("[approve] ADO NOT configured:",
+        "ORG:", adoOrg ? "SET" : "MISSING",
+        "PROJECT:", adoProject ? "SET" : "MISSING",
+        "TOKEN:", adoToken ? "SET" : "MISSING",
+      );
     }
 
     await story.save();
+    console.log("[approve] Story saved with status:", story.status);
 
     res.json({
       success: true,
@@ -109,7 +127,7 @@ export const approveStory = async (req, res) => {
         : "Story approved",
     });
   } catch (error) {
-    console.error("[approve] Error:", error);
+    console.error("[approve] Critical error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
