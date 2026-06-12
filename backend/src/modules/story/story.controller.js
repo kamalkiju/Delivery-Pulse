@@ -29,7 +29,11 @@ export async function getStories(req, res) {
     ];
 
     const filter = { organisationId: { $in: orgIds } };
-    if (status) filter.status = status;
+    if (status === "approved") {
+      filter.status = { $in: ["approved", "pushed-to-ado"] };
+    } else if (status) {
+      filter.status = status;
+    }
     if (source) filter.source = source;
     if (projectId) filter.projectId = projectId;
 

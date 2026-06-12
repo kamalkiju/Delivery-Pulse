@@ -143,6 +143,7 @@ interface StoryCardProps {
 function StoryCard({ story, tabSource, deletingId, onEdit, onReject, onApprove, onDelete }: StoryCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const storyId = sid(story);
+  console.log("[card] story._id:", story._id, "story.id:", story.id);
   const colors = TYPE_COLORS[story.type] ?? fallbackColor;
   const priorityColor = PRIORITY_COLORS[story.priority] ?? "#94a3b8";
   const acList = story.acceptanceCriteriaFormatted?.length
@@ -290,7 +291,17 @@ function StoryCard({ story, tabSource, deletingId, onEdit, onReject, onApprove, 
               </button>
             )}
             <button type="button" onClick={() => onReject(storyId)} style={{ padding: "7px 16px", backgroundColor: "#ef4444", color: "white", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Reject</button>
-            <button type="button" onClick={() => onApprove(storyId)} style={{ padding: "7px 16px", backgroundColor: "#16a34a", color: "white", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>✓ Approve</button>
+            <button
+              type="button"
+              onClick={() => {
+                const id = story._id || story.id;
+                console.log("[approve] clicking approve for:", id);
+                if (id) onApprove(id);
+              }}
+              style={{ padding: "7px 16px", backgroundColor: "#16a34a", color: "white", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+            >
+              ✓ Approve
+            </button>
           </div>
         </div>
       </div>
@@ -379,8 +390,8 @@ const ReviewQueuePage = () => {
     }
 
     try {
-      // Fetch ADO (pushed) stories
-      const adoRes = await api.get(`/stories?status=pushed-to-ado${pp}`);
+      // Fetch ADO (approved + pushed) stories
+      const adoRes = await api.get(`/stories?status=approved${pp}`);
       const adoData = parseStories(adoRes.data) as Story[];
       setAdoStories(adoData);
     } catch {
@@ -408,24 +419,29 @@ const ReviewQueuePage = () => {
 
   const handleApprove = async (storyId: string) => {
     try {
+      console.log("[approve] Approving story:", storyId);
+
       const response = await api.patch(`/stories/${storyId}/approve`);
+      console.log("[approve] Response:", response.data);
+
       const { adoId, adoUrl, message } = response.data;
 
       if (adoId && adoUrl) {
         const openADO = window.confirm(
-          `✅ ${message}\n\nClick OK to view in Azure DevOps`,
+          `✅ ${message}\n\nClick OK to open in Azure DevOps`,
         );
         if (openADO) {
           window.open(adoUrl, "_blank");
         }
       } else {
-        alert("✅ Story approved successfully");
+        alert(`✅ ${message || "Story approved successfully"}`);
       }
 
       fetchAllStories();
-    } catch (error) {
-      console.error("Approve error:", error);
-      alert("Failed to approve story");
+    } catch (error: unknown) {
+      console.error("[approve] Error:", error);
+      const msg = error instanceof Error ? error.message : "Unknown error";
+      alert(`Failed to approve: ${msg}`);
     }
   };
 
