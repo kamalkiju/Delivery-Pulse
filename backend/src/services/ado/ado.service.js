@@ -1,112 +1,72 @@
 import { Buffer } from "node:buffer";
 
-const buildADODescription = (story) => {
-  let html = "";
-
-  if (story.description) {
-    html += `<div style="margin-bottom:16px">
-      <strong>Description:</strong><br/>
-      <em>${story.description}</em>
-    </div>`;
-  }
-
-  if (story.businessRequirement) {
-    html += `<div style="margin-bottom:16px">
-      <strong>Business Requirement:</strong><br/>
-      ${story.businessRequirement}
-    </div>`;
-  }
-
-  if (story.userFlow) {
-    html += `<div style="margin-bottom:16px">
-      <strong>User Flow:</strong><br/>
-      ${story.userFlow.replace(/\n/g, "<br/>")}
-    </div>`;
-  }
-
-  if (story.uiBehavior) {
-    html += `<div style="margin-bottom:16px">
-      <strong>UI Behavior:</strong><br/>
-      ${story.uiBehavior}
-    </div>`;
-  }
-
-  if (story.validations?.length > 0) {
-    html += `<div style="margin-bottom:16px">
-      <strong>Validations:</strong><br/>
-      <ul>
-        ${story.validations.map((v) => `<li>${v}</li>`).join("")}
-      </ul>
-    </div>`;
-  }
-
-  if (story.figmaLink) {
-    html += `<div style="margin-bottom:16px">
-      <strong>Figma Design:</strong><br/>
-      <a href="${story.figmaLink}">${story.figmaLink}</a>
-    </div>`;
-  }
-
-  if (story.releaseNotes) {
-    html += `<div style="margin-bottom:16px">
-      <strong>Release Notes:</strong><br/>
-      ${story.releaseNotes}
-    </div>`;
-  }
-
-  return html;
-};
-
 export const createADOWorkItem = async (story) => {
   const org = process.env.ADO_ORG;
   const project = process.env.ADO_PROJECT;
   const token = process.env.ADO_TOKEN;
 
   if (!org || !project || !token) {
-    throw new Error("ADO_ORG, ADO_PROJECT and ADO_TOKEN must be set");
+    throw new Error(
+      `ADO credentials missing: org=${org} project=${project} token=${token ? "set" : "NOT SET"}`,
+    );
   }
 
-  console.log("[ado] Creating work item for:", story.storyTitle);
-  console.log("[ado] Org:", org, "Project:", project);
+  console.log("[ado] org:", org);
+  console.log("[ado] project:", project);
+  console.log("[ado] token preview:", token.substring(0, 8) + "...");
 
   const pat = Buffer.from(`:${token}`).toString("base64");
   const workItemType = story.type === "Bug" ? "Bug" : "User Story";
 
+  let descriptionHtml = `<div><em>${story.description || ""}</em></div>`;
+
+  if (story.businessRequirement) {
+    descriptionHtml += `<br/><div><strong>Business Requirement:</strong><br/>${story.businessRequirement}</div>`;
+  }
+  if (story.userFlow) {
+    descriptionHtml += `<br/><div><strong>User Flow:</strong><br/>${story.userFlow}</div>`;
+  }
+  if (story.uiBehavior) {
+    descriptionHtml += `<br/><div><strong>UI Behavior:</strong><br/>${story.uiBehavior}</div>`;
+  }
+  if (story.validations?.length > 0) {
+    descriptionHtml += `<br/><div><strong>Validations:</strong><br/><ul>${
+      story.validations.map((v) => `<li>${v}</li>`).join("")
+    }</ul></div>`;
+  }
+  if (story.figmaLink) {
+    descriptionHtml += `<br/><div><strong>Figma:</strong> <a href="${story.figmaLink}">${story.figmaLink}</a></div>`;
+  }
+  if (story.releaseNotes) {
+    descriptionHtml += `<br/><div><strong>Release Notes:</strong><br/>${story.releaseNotes}</div>`;
+  }
+
   const acHtml = (story.acceptanceCriteriaFormatted ||
     story.acceptanceCriteria || [])
     .map((ac, i) => {
-      const id = typeof ac === "object"
-        ? (ac.id || `AC ${i + 1}`)
-        : `AC ${i + 1}`;
-      const scenario = typeof ac === "string"
-        ? ac
-        : (ac.scenario || ac.then || "");
+      const id = typeof ac === "object" ? (ac.id || `AC ${i + 1}`) : `AC ${i + 1}`;
+      const scenario = typeof ac === "string" ? ac : (ac.scenario || "");
       return `<div><strong>${id}:</strong> ${scenario}</div>`;
     })
     .join("<br/>");
 
-  const priorityMap = {
-    Critical: 1,
-    High: 2,
-    Medium: 3,
-    Low: 4,
-  };
+  const priorityMap = { Critical: 1, High: 2, Medium: 3, Low: 4 };
 
   const patchDocument = [
     {
       op: "add",
       path: "/fields/System.Title",
-      value: story.storyTitle || story.title,
+      value: story.storyTitle || story.title || "Untitled Story",
     },
     {
       op: "add",
       path: "/fields/System.Description",
-      value: buildADODescription(story),
+      value: descriptionHtml,
     },
     {
       op: "add",
       path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
-      value: acHtml,
+      value: acHtml || "No acceptance criteria defined",
     },
     {
       op: "add",
@@ -114,22 +74,6 @@ export const createADOWorkItem = async (story) => {
       value: priorityMap[story.priority] || 3,
     },
   ];
-
-  if (story.sprint && story.sprint !== "Backlog") {
-    patchDocument.push({
-      op: "add",
-      path: "/fields/System.IterationPath",
-      value: `${project}\\${story.sprint}`,
-    });
-  }
-
-  if (story.assignee) {
-    patchDocument.push({
-      op: "add",
-      path: "/fields/System.AssignedTo",
-      value: story.assignee,
-    });
-  }
 
   if (story.tags?.length > 0) {
     patchDocument.push({
@@ -139,19 +83,11 @@ export const createADOWorkItem = async (story) => {
     });
   }
 
-  if (story.areaPath) {
-    patchDocument.push({
-      op: "add",
-      path: "/fields/System.AreaPath",
-      value: story.areaPath,
-    });
-  }
-
   const encodedProject = encodeURIComponent(project);
   const encodedType = encodeURIComponent(workItemType);
   const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$${encodedType}?api-version=7.0`;
 
-  console.log("[ado] Calling URL:", url);
+  console.log("[ado] POST:", url);
 
   const response = await fetch(url, {
     method: "POST",
@@ -163,14 +99,15 @@ export const createADOWorkItem = async (story) => {
   });
 
   const responseText = await response.text();
+  console.log("[ado] Response status:", response.status);
 
   if (!response.ok) {
-    console.error("[ado] Error:", response.status, responseText);
-    throw new Error(`ADO error ${response.status}: ${responseText}`);
+    console.error("[ado] Error:", responseText.substring(0, 500));
+    throw new Error(`ADO ${response.status}: ${responseText.substring(0, 200)}`);
   }
 
   const result = JSON.parse(responseText);
-  console.log("[ado] Work item created! ID:", result.id);
+  console.log("[ado] Created work item ID:", result.id);
   return result.id;
 };
 

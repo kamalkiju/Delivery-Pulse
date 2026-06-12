@@ -86,6 +86,20 @@ app.use(express.json());
 // Log each HTTP request method, path, status, and response time
 app.use(morgan("dev"));
 
+// ADO credentials test (no auth — verify Render env vars)
+app.get("/api/ado/test", async (req, res) => {
+  const org = process.env.ADO_ORG;
+  const project = process.env.ADO_PROJECT;
+  const token = process.env.ADO_TOKEN;
+
+  res.json({
+    org: org || "NOT SET",
+    project: project || "NOT SET",
+    tokenSet: token ? "YES" : "NOT SET",
+    tokenPreview: token ? token.substring(0, 8) + "..." : "NOT SET",
+  });
+});
+
 // --- API route registration ---
 app.use("/api/auth", authRoutes);
 app.use("/api/dashboard", dashboardRoutes);

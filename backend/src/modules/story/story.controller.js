@@ -63,55 +63,50 @@ export const approveStory = async (req, res) => {
     }
 
     story.status = "approved";
-    story.approvedBy = req.user?.userId ?? req.user?.id;
     story.approvedAt = new Date();
 
     let adoId = null;
     let adoUrl = null;
 
-    if (process.env.ADO_ORG &&
-        process.env.ADO_PROJECT &&
-        process.env.ADO_TOKEN) {
+    const adoOrg = process.env.ADO_ORG;
+    const adoProject = process.env.ADO_PROJECT;
+    const adoToken = process.env.ADO_TOKEN;
+
+    console.log("[approve] ADO configured:",
+      adoOrg ? "YES" : "NO",
+      adoProject ? "YES" : "NO",
+      adoToken ? "YES" : "NO",
+    );
+
+    if (adoOrg && adoProject && adoToken) {
       try {
-        console.log("[story] Pushing to ADO...");
         const { createADOWorkItem } = await import(
           "../../services/ado/ado.service.js"
         );
         adoId = await createADOWorkItem(story);
         story.adoId = String(adoId);
         story.status = "pushed-to-ado";
-
-        const org = process.env.ADO_ORG;
-        const project = encodeURIComponent(process.env.ADO_PROJECT);
-        adoUrl = `https://dev.azure.com/${org}/${project}/_workitems/edit/${adoId}`;
+        adoUrl = `https://dev.azure.com/${adoOrg}/${encodeURIComponent(adoProject)}/_workitems/edit/${adoId}`;
         story.adoUrl = adoUrl;
-
-        console.log("[story] ADO work item created:", adoId);
-        console.log("[story] ADO URL:", adoUrl);
+        console.log("[approve] ADO work item created:", adoId);
       } catch (adoError) {
-        console.error("[story] ADO push failed:", adoError.message);
+        console.error("[approve] ADO failed:", adoError.message);
       }
-    } else {
-      console.log("[story] ADO not configured - approving without ADO push");
     }
 
     await story.save();
 
     res.json({
       success: true,
-      story,
       adoId,
       adoUrl,
       message: adoId
-        ? `Story approved and created in ADO as #${adoId}`
-        : "Story approved successfully",
+        ? `Approved and pushed to ADO #${adoId}`
+        : "Story approved",
     });
   } catch (error) {
-    console.error("[story] Approve error:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    console.error("[approve] Error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
