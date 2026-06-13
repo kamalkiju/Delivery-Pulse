@@ -1,32 +1,56 @@
 import { Buffer } from "node:buffer";
+import AdoConnection from "../../models/AdoConnection.model.js";
 
-export const createADOWorkItem = async (story) => {
-  const org = process.env.ADO_ORG;
-  const project = process.env.ADO_PROJECT;
-  const token = process.env.ADO_TOKEN;
+export async function resolveAdoConfig(config = null) {
+  if (config?.org && config?.project && config?.token) {
+    console.log("[ado] Using config passed directly");
+    return {
+      org: config.org,
+      project: config.project,
+      token: config.token,
+    };
+  }
 
-  if (!org || !project || !token) {
+  const conn = await AdoConnection.findOne({
+    isActive: true,
+    connectionStatus: "connected",
+  }).sort({ isDefault: -1, createdAt: -1 });
+
+  if (conn) {
+    console.log("[ado] Using DB connection:", conn.name);
+    return {
+      org: conn.adoOrg,
+      project: conn.adoProject,
+      token: conn.patToken,
+    };
+  }
+
+  return null;
+}
+
+export const createADOWorkItem = async (story, config = null) => {
+  const credentials = await resolveAdoConfig(config);
+
+  if (!credentials) {
     throw new Error(
-      `ADO credentials missing: org=${org} project=${project} token=${token ? "set" : "NOT SET"}`,
+      "ADO credentials not configured. Add a connection in Settings → ADO Integration.",
     );
   }
+
+  const { org, project, token } = credentials;
 
   console.log("[ado] org:", org);
   console.log("[ado] project:", project);
   console.log("[ado] token preview:", token.substring(0, 8) + "...");
 
   const pat = Buffer.from(`:${token}`).toString("base64");
-  const workItemType = 'Issue';
+  const workItemType = "Issue";
 
   console.log("[ado] workItemType:", workItemType);
 
   const nl = (text) => (text || "").replace(/\n/g, "<br/>");
 
-  let descriptionHtml = "";
-
-  if (story.description) {
-    descriptionHtml += `<div><strong>Description:</strong><br/><em>${story.description}</em></div>`;
-  }
+  let descriptionHtml = `<div><em>${story.description || ""}</em></div>`;
 
   if (story.businessRequirement) {
     descriptionHtml += `<br/><div><strong>Business Requirement:</strong><br/>${story.businessRequirement}</div>`;
@@ -49,14 +73,17 @@ export const createADOWorkItem = async (story) => {
     descriptionHtml += `<br/><div><strong>Release Notes:</strong><br/>${story.releaseNotes}</div>`;
   }
 
-  const acHtml = (story.acceptanceCriteriaFormatted ||
-    story.acceptanceCriteria || [])
-    .map((ac, i) => {
+  const acList = story.acceptanceCriteriaFormatted || story.acceptanceCriteria || [];
+
+  if (acList.length > 0) {
+    descriptionHtml += "<br/><div><strong>Acceptance Criteria:</strong>";
+    acList.forEach((ac, i) => {
       const id = typeof ac === "object" ? (ac.id || `AC ${i + 1}`) : `AC ${i + 1}`;
       const scenario = typeof ac === "string" ? ac : (ac.scenario || "");
-      return `<div><strong>${id}:</strong> ${scenario}</div>`;
-    })
-    .join("<br/>");
+      descriptionHtml += `<div style="margin:4px 0;padding:8px;background:#f8f8f8;border-left:3px solid #0078d4"><strong>${id}:</strong> ${scenario}</div>`;
+    });
+    descriptionHtml += "</div>";
+  }
 
   const priorityMap = { Critical: 1, High: 2, Medium: 3, Low: 4 };
 
@@ -73,11 +100,6 @@ export const createADOWorkItem = async (story) => {
     },
     {
       op: "add",
-      path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
-      value: acHtml || "No acceptance criteria defined",
-    },
-    {
-      op: "add",
       path: "/fields/Microsoft.VSTS.Common.Priority",
       value: priorityMap[story.priority] || 3,
     },
@@ -88,6 +110,14 @@ export const createADOWorkItem = async (story) => {
       op: "add",
       path: "/fields/System.Tags",
       value: story.tags.join("; "),
+    });
+  }
+
+  if (story.assignee) {
+    patchDocument.push({
+      op: "add",
+      path: "/fields/System.AssignedTo",
+      value: story.assignee,
     });
   }
 
@@ -102,45 +132,42 @@ export const createADOWorkItem = async (story) => {
     headers: {
       "Content-Type": "application/json-patch+json",
       Authorization: `Basic ${pat}`,
+      Accept: "application/json",
     },
     body: JSON.stringify(patchDocument),
   });
 
-  const responseText = await response.text();
   console.log("[ado] Response status:", response.status);
+  const responseText = await response.text();
   console.log("[ado] Response preview:", responseText.substring(0, 100));
 
-  if (response.status === 203
-    || responseText.includes("<!DOCTYPE")
-    || responseText.includes("<html")) {
+  if (responseText.includes("<!DOCTYPE") || responseText.includes("<html")) {
     throw new Error(
-      "ADO returned HTML page. PAT token may be expired or invalid. "
-      + "Please create a new PAT token at dev.azure.com and update in Settings.",
+      "ADO returned HTML. PAT token invalid or expired. "
+      + "Update token in Settings → ADO Integration.",
     );
   }
 
   if (!response.ok) {
-    console.error("[ado] Error:", responseText.substring(0, 500));
-    throw new Error(`ADO error ${response.status}: ${responseText.substring(0, 200)}`);
+    throw new Error(`ADO ${response.status}: ${responseText.substring(0, 200)}`);
   }
 
   const result = JSON.parse(responseText);
-  console.log("[ado] Created work item ID:", result.id);
+  console.log("[ado] Work item created:", result.id);
   return result.id;
 };
 
 /** @deprecated Use createADOWorkItem — kept for story.service compatibility */
 export const createWorkItem = createADOWorkItem;
 
-const adoBaseUrl = () =>
-  `https://dev.azure.com/${process.env.ADO_ORG}/${encodeURIComponent(process.env.ADO_PROJECT ?? "")}`;
-
 export async function updateWorkItemStatus(adoId, status) {
-  const token = process.env.ADO_TOKEN;
-  if (!process.env.ADO_ORG || !process.env.ADO_PROJECT || !token) {
+  const credentials = await resolveAdoConfig();
+  if (!credentials) {
     console.warn("[ado] ADO not configured — skipping status update");
     return;
   }
+
+  const { org, project, token } = credentials;
 
   const stateMap = {
     "in-progress": "Active",
@@ -159,13 +186,14 @@ export async function updateWorkItemStatus(adoId, status) {
   }
 
   const pat = Buffer.from(`:${token}`).toString("base64");
-  const url = `${adoBaseUrl()}/_apis/wit/workitems/${adoId}?api-version=7.0`;
+  const url = `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_apis/wit/workitems/${adoId}?api-version=7.0`;
 
   const response = await fetch(url, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json-patch+json",
       Authorization: `Basic ${pat}`,
+      Accept: "application/json",
     },
     body: JSON.stringify([
       { op: "add", path: "/fields/System.State", value: adoState },
@@ -174,9 +202,9 @@ export async function updateWorkItemStatus(adoId, status) {
 
   if (!response.ok) {
     const body = await response.text();
-    console.error("[ado] Failed to update work item status:", body);
+    console.error("[ado] Failed to update work item status:", body.substring(0, 200));
     throw new Error("Failed to update ADO work item status");
   }
 }
 
-export default { createADOWorkItem, createWorkItem, updateWorkItemStatus };
+export default { resolveAdoConfig, createADOWorkItem, createWorkItem, updateWorkItemStatus };

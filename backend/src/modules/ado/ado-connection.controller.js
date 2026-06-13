@@ -90,10 +90,7 @@ export const addAdoConnection = async (req, res) => {
     });
 
     if (connectionStatus === "connected" && connection.isDefault) {
-      process.env.ADO_ORG = adoOrg;
-      process.env.ADO_PROJECT = adoProject;
-      process.env.ADO_TOKEN = patToken;
-      console.log("[ado-conn] Updated env vars with default connection");
+      console.log("[ado-conn] Default connection saved:", connection.name);
     }
 
     res.status(201).json({
@@ -259,9 +256,6 @@ export const setDefaultAdoConnection = async (req, res) => {
       return res.status(404).json({ success: false, message: "Not found" });
     }
 
-    process.env.ADO_ORG = connection.adoOrg;
-    process.env.ADO_PROJECT = connection.adoProject;
-    process.env.ADO_TOKEN = connection.patToken;
     console.log("[ado-conn] Default connection updated:", connection.name);
 
     res.json({

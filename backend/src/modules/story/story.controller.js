@@ -49,15 +49,6 @@ const getActiveAdoConnection = async (organisationId) => {
       };
     }
 
-    if (process.env.ADO_ORG && process.env.ADO_PROJECT && process.env.ADO_TOKEN) {
-      return {
-        org: process.env.ADO_ORG,
-        project: process.env.ADO_PROJECT,
-        token: process.env.ADO_TOKEN,
-        workItemTypes: [],
-      };
-    }
-
     return null;
   } catch (error) {
     console.error("[ado-conn] getActiveAdoConnection error:", error.message);
@@ -118,10 +109,6 @@ export const approveStory = async (req, res) => {
     }
 
     console.log("[approve] Story found:", story.storyTitle);
-    console.log("[approve] Checking ADO env vars...");
-    console.log("[approve] ADO_ORG:", process.env.ADO_ORG || "NOT SET");
-    console.log("[approve] ADO_PROJECT:", process.env.ADO_PROJECT || "NOT SET");
-    console.log("[approve] ADO_TOKEN:", process.env.ADO_TOKEN ? "SET" : "NOT SET");
 
     story.status = "approved";
     story.approvedAt = new Date();
@@ -137,23 +124,17 @@ export const approveStory = async (req, res) => {
     );
 
     if (adoConfig) {
-      process.env.ADO_ORG = adoConfig.org;
-      process.env.ADO_PROJECT = adoConfig.project;
-      process.env.ADO_TOKEN = adoConfig.token;
-
       console.log("[approve] ADO configured - attempting push...");
       try {
         const adoModule = await import("../../services/ado/ado.service.js");
         const createADOWorkItem =
           adoModule.createADOWorkItem || adoModule.default?.createADOWorkItem;
 
-        console.log("[approve] createADOWorkItem function:", typeof createADOWorkItem);
-
         if (typeof createADOWorkItem !== "function") {
           throw new Error("createADOWorkItem is not exported from ado.service.js");
         }
 
-        adoId = await createADOWorkItem(story);
+        adoId = await createADOWorkItem(story, adoConfig);
 
         console.log("[approve] ADO work item created:", adoId);
 

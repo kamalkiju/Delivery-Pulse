@@ -1,17 +1,17 @@
 import { Buffer } from "node:buffer";
 import Story from "../../models/Story.model.js";
+import { resolveAdoConfig } from "../../services/ado/ado.service.js";
 
-const getADOClient = () => {
-  const org = process.env.ADO_ORG;
-  const project = process.env.ADO_PROJECT;
-  const token = process.env.ADO_TOKEN;
-
-  if (!org || !project || !token) {
-    throw new Error("ADO_ORG, ADO_PROJECT and ADO_TOKEN must be set");
+const getADOClient = async () => {
+  const credentials = await resolveAdoConfig();
+  if (!credentials) {
+    throw new Error(
+      "ADO credentials not configured. Add a connection in Settings → ADO Integration.",
+    );
   }
 
-  const pat = Buffer.from(`:${token}`).toString("base64");
-  return { org, project, token, pat };
+  const pat = Buffer.from(`:${credentials.token}`).toString("base64");
+  return { ...credentials, pat };
 };
 
 const ADO_STATUS_MAP = {
@@ -29,7 +29,7 @@ const ADO_STATUS_MAP = {
 
 export const syncADOStories = async (req, res) => {
   try {
-    const { org, project, pat } = getADOClient();
+    const { org, project, pat } = await getADOClient();
 
     console.log("[ado-sync] Syncing from ADO...");
 
@@ -193,9 +193,17 @@ export const updateStoryFromADO = async (req, res) => {
 
 export const bulkPushToADO = async (req, res) => {
   try {
-    const { createADOWorkItem } = await import(
+    const { createADOWorkItem, resolveAdoConfig } = await import(
       "../../services/ado/ado.service.js"
     );
+
+    const adoCredentials = await resolveAdoConfig();
+    if (!adoCredentials) {
+      return res.status(400).json({
+        success: false,
+        message: "No ADO connection configured. Add one in Settings → ADO Integration.",
+      });
+    }
 
     console.log("[bulk-push] Finding stories not in ADO...");
 
@@ -221,11 +229,9 @@ export const bulkPushToADO = async (req, res) => {
         const storyTitle = story.storyTitle || story.title || "Untitled Story";
         console.log("[bulk-push] Pushing:", storyTitle);
 
-        const adoId = await createADOWorkItem(story);
+        const adoId = await createADOWorkItem(story, adoCredentials);
 
-        const org = process.env.ADO_ORG;
-        const project = process.env.ADO_PROJECT;
-        const adoUrl = `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_workitems/edit/${adoId}`;
+        const adoUrl = `https://dev.azure.com/${adoCredentials.org}/${encodeURIComponent(adoCredentials.project)}/_workitems/edit/${adoId}`;
 
         story.adoId = String(adoId);
         story.adoUrl = adoUrl;
