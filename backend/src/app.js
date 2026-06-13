@@ -109,6 +109,7 @@ app.use("/api/slack", slackRoutes);
 app.use("/api/review", reviewRoutes);
 // Review Queue — approve / reject / edit individual stories
 app.use("/api/stories", storyRoutes);
+// Azure DevOps — sync board, bulk push approved stories, status updates
 app.use("/api/ado", adoRoutes);
 app.use("/api/documents", documentsRoutes);
 app.use("/api/meetings", meetingsRoutes);
@@ -116,6 +117,10 @@ app.use("/api/clients", clientsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/projects", projectRoutes);
+
+console.log(
+  "[routes] ADO mounted at /api/ado → GET /sync, GET /board, POST /bulk-push, POST /update",
+);
 
 // Health check for load balancers and uptime monitors
 app.get("/health", (_req, res) => {

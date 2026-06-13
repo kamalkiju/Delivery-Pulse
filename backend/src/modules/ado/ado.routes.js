@@ -1,5 +1,5 @@
 import express from "express";
-import { authMiddleware } from "../auth/auth.middleware.js";
+import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import {
   syncADOStories,
   getADOBoard,
