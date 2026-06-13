@@ -123,6 +123,9 @@ app.use("/api/projects", projectRoutes);
 console.log(
   "[routes] ADO mounted at /api/ado → GET /sync, GET /board, POST /bulk-push, POST /update",
 );
+console.log(
+  "[routes] ADO connections at /api/ado-connections → GET/POST /, POST /:id/test, PATCH /:id/set-default, DELETE /:id",
+);
 
 // Health check for load balancers and uptime monitors
 app.get("/health", (_req, res) => {
