@@ -1,11 +1,15 @@
 import Story from "../../models/Story.model.js";
 import SlackMessage from "../../models/SlackMessage.model.js";
-import Client from "../../models/Client.model.js";
-import SlackWorkspace from "../../models/SlackWorkspace.model.js";
 
-function getOrgId(req) {
-  return req.user?.orgId ?? req.user?.organisationId;
-}
+const getAllOrgIds = async () => {
+  try {
+    const SlackWorkspace = (await import("../../models/SlackWorkspace.model.js")).default;
+    const workspaces = await SlackWorkspace.find({});
+    return [...new Set(workspaces.map((w) => w.organisationId?.toString()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+};
 
 const getTimeAgo = (date) => {
   const seconds = Math.floor((new Date() - new Date(date)) / 1000);
@@ -20,12 +24,17 @@ const getTimeAgo = (date) => {
 
 export const getDashboardStats = async (req, res) => {
   try {
-    const organisationId = getOrgId(req);
-    if (!organisationId) {
-      return res.status(400).json({ success: false, message: "Missing organisation" });
+    const orgIds = await getAllOrgIds();
+    const userOrgId = (req.user?.orgId ?? req.user?.organisationId)?.toString();
+    if (userOrgId && !orgIds.includes(userOrgId)) {
+      orgIds.push(userOrgId);
     }
 
-    const filter = { organisationId };
+    console.log("[dashboard-stats] searching orgIds:", orgIds);
+
+    const filter = orgIds.length > 0
+      ? { organisationId: { $in: orgIds } }
+      : {};
 
     const [
       totalStories,
@@ -33,48 +42,66 @@ export const getDashboardStats = async (req, res) => {
       approvedStories,
       adoStories,
       totalMessages,
-      slackWorkspaces,
+      aiStories,
     ] = await Promise.all([
       Story.countDocuments(filter),
       Story.countDocuments({ ...filter, status: "pending-review" }),
-      Story.countDocuments({ ...filter, status: "approved" }),
       Story.countDocuments({
         ...filter,
-        status: "pushed-to-ado",
+        status: { $in: ["approved", "pushed-to-ado"] },
+      }),
+      Story.countDocuments({
+        ...filter,
         adoId: { $exists: true, $ne: null },
       }),
-      SlackMessage.countDocuments(filter),
-      SlackWorkspace.countDocuments({ organisationId, isActive: true }),
+      SlackMessage.countDocuments({}),
+      Story.countDocuments({ ...filter, isAIGenerated: true }),
     ]);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const todayStories = await Story.countDocuments({
+    const [todayStories, todayMessages] = await Promise.all([
+      Story.countDocuments({
+        ...filter,
+        createdAt: { $gte: today },
+      }),
+      SlackMessage.countDocuments({
+        createdAt: { $gte: today },
+      }),
+    ]);
+
+    const slackStories = await Story.countDocuments({
       ...filter,
-      createdAt: { $gte: today },
+      source: "slack",
     });
 
-    const todayMessages = await SlackMessage.countDocuments({
+    const docStories = await Story.countDocuments({
       ...filter,
-      createdAt: { $gte: today },
+      source: "document",
     });
 
-    const aiGeneratedStories = await Story.countDocuments({
-      ...filter,
-      isAIGenerated: true,
-    });
+    let connectedWorkspaces = 0;
+    try {
+      const SlackWorkspace = (await import("../../models/SlackWorkspace.model.js")).default;
+      connectedWorkspaces = await SlackWorkspace.countDocuments({ isActive: true });
+    } catch {
+      // ignore
+    }
 
-    console.log(
-      "[dashboard-stats] total:",
+    console.log("[dashboard-stats]", {
       totalStories,
-      "pending:",
       pendingStories,
-      "approved:",
       approvedStories,
-      "ado:",
       adoStories,
-    );
+      totalMessages,
+      todayStories,
+      todayMessages,
+      slackStories,
+      docStories,
+      aiStories,
+      connectedWorkspaces,
+    });
 
     res.json({
       success: true,
@@ -86,8 +113,10 @@ export const getDashboardStats = async (req, res) => {
         totalMessages,
         todayStories,
         todayMessages,
-        aiGeneratedStories,
-        connectedWorkspaces: slackWorkspaces,
+        aiGeneratedStories: aiStories,
+        slackStories,
+        documentStories: docStories,
+        connectedWorkspaces,
       },
     });
   } catch (error) {
@@ -98,22 +127,26 @@ export const getDashboardStats = async (req, res) => {
 
 export const getDashboardActivity = async (req, res) => {
   try {
-    const organisationId = getOrgId(req);
-    if (!organisationId) {
-      return res.status(400).json({ success: false, message: "Missing organisation" });
+    const orgIds = await getAllOrgIds();
+    const userOrgId = (req.user?.orgId ?? req.user?.organisationId)?.toString();
+    if (userOrgId && !orgIds.includes(userOrgId)) {
+      orgIds.push(userOrgId);
     }
 
-    const filter = { organisationId };
+    const filter = orgIds.length > 0
+      ? { organisationId: { $in: orgIds } }
+      : {};
 
-    const recentStories = await Story.find(filter)
-      .populate("clientId", "name company")
-      .sort({ createdAt: -1 })
-      .limit(5);
-
-    const recentMessages = await SlackMessage.find(filter)
-      .populate("clientId", "name")
-      .sort({ createdAt: -1 })
-      .limit(5);
+    const [recentStories, recentMessages] = await Promise.all([
+      Story.find(filter)
+        .populate("clientId", "name company")
+        .sort({ createdAt: -1 })
+        .limit(5),
+      SlackMessage.find({})
+        .populate("clientId", "name")
+        .sort({ createdAt: -1 })
+        .limit(5),
+    ]);
 
     const activity = [];
 
@@ -121,10 +154,10 @@ export const getDashboardActivity = async (req, res) => {
       activity.push({
         id: story._id,
         type: "story_created",
-        title: story.storyTitle || story.title,
-        description: `${story.type} • ${story.priority} priority`,
+        title: story.storyTitle || story.title || "Untitled Story",
+        description: `${story.type} • ${story.priority}`,
         source: story.source,
-        client: story.clientId?.name || "Unknown Client",
+        client: story.clientId?.name || "Client",
         status: story.status,
         adoId: story.adoId,
         isAIGenerated: story.isAIGenerated,
@@ -138,7 +171,7 @@ export const getDashboardActivity = async (req, res) => {
       activity.push({
         id: msg._id,
         type: "message_received",
-        title: text.length > 60 ? `${text.substring(0, 60)}...` : text || "Slack message",
+        title: text.substring(0, 60) + (text.length > 60 ? "..." : ""),
         description: `From ${msg.channelName || "Slack"}`,
         source: "slack",
         client: msg.clientId?.name || "Client",
@@ -162,25 +195,22 @@ export const getDashboardActivity = async (req, res) => {
 
 export const getDashboardClients = async (req, res) => {
   try {
-    const organisationId = getOrgId(req);
-    if (!organisationId) {
-      return res.status(400).json({ success: false, message: "Missing organisation" });
+    let Client;
+    try {
+      Client = (await import("../../models/Client.model.js")).default;
+    } catch {
+      return res.json({ success: true, clients: [] });
     }
 
-    const orgFilter = { organisationId };
-    const clients = await Client.find(orgFilter).limit(10);
+    const clients = await Client.find({}).limit(10);
 
     const clientsWithStats = await Promise.all(
       clients.map(async (client) => {
-        const clientFilter = {
-          ...orgFilter,
-          clientId: client._id,
-        };
+        const clientFilter = { clientId: client._id };
 
         const [
           totalStories,
           pendingStories,
-          approvedStories,
           adoStories,
           totalMessages,
         ] = await Promise.all([
@@ -188,10 +218,6 @@ export const getDashboardClients = async (req, res) => {
           Story.countDocuments({
             ...clientFilter,
             status: "pending-review",
-          }),
-          Story.countDocuments({
-            ...clientFilter,
-            status: { $in: ["approved", "pushed-to-ado"] },
           }),
           Story.countDocuments({
             ...clientFilter,
@@ -204,18 +230,16 @@ export const getDashboardClients = async (req, res) => {
           ? Math.round((adoStories / totalStories) * 100)
           : 0;
 
-        const responseScore = totalMessages > 0 ? 80 : 50;
-
-        const openIssues = pendingStories;
-        const openIssueScore = openIssues === 0 ? 30
-          : openIssues <= 5 ? 20
-            : openIssues <= 10 ? 10
+        const responseScore = totalMessages > 0 ? 24 : 15;
+        const deliveryScore = Math.round(deliveryRate * 0.4);
+        const openIssueScore = pendingStories === 0 ? 30
+          : pendingStories <= 5 ? 20
+            : pendingStories <= 10 ? 10
               : 0;
 
-        const deliveryScore = Math.round(deliveryRate * 0.4);
         const healthScore = Math.min(
           100,
-          responseScore * 0.3 + deliveryScore + openIssueScore,
+          responseScore + deliveryScore + openIssueScore,
         );
 
         return {
@@ -224,7 +248,6 @@ export const getDashboardClients = async (req, res) => {
           company: client.company,
           totalStories,
           pendingStories,
-          approvedStories,
           adoStories,
           totalMessages,
           deliveryRate,
@@ -236,7 +259,11 @@ export const getDashboardClients = async (req, res) => {
       }),
     );
 
-    res.json({ success: true, clients: clientsWithStats });
+    const filtered = clientsWithStats.filter((c) =>
+      c.totalStories > 0 || c.totalMessages > 0,
+    );
+
+    res.json({ success: true, clients: filtered });
   } catch (error) {
     console.error("[dashboard-clients] error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -245,49 +272,53 @@ export const getDashboardClients = async (req, res) => {
 
 export const getSprintHealth = async (req, res) => {
   try {
-    const organisationId = getOrgId(req);
-    if (!organisationId) {
-      return res.status(400).json({ success: false, message: "Missing organisation" });
+    const orgIds = await getAllOrgIds();
+    const userOrgId = (req.user?.orgId ?? req.user?.organisationId)?.toString();
+    if (userOrgId && !orgIds.includes(userOrgId)) {
+      orgIds.push(userOrgId);
     }
 
-    const filter = { organisationId };
+    const filter = orgIds.length > 0
+      ? { organisationId: { $in: orgIds } }
+      : {};
 
     const sprintStories = await Story.find({
       ...filter,
       sprint: { $in: ["Current", "Next"] },
     });
 
-    const currentSprint = sprintStories.filter((s) => s.sprint === "Current");
-    const nextSprint = sprintStories.filter((s) => s.sprint === "Next");
+    const current = sprintStories.filter((s) => s.sprint === "Current");
+    const next = sprintStories.filter((s) => s.sprint === "Next");
 
-    const currentTotal = currentSprint.length;
-    const currentDone = currentSprint.filter((s) =>
-      s.status === "pushed-to-ado" || s.status === "done",
+    const done = current.filter((s) =>
+      ["pushed-to-ado", "done", "approved"].includes(s.status),
     ).length;
-    const currentInProgress = currentSprint.filter((s) =>
+
+    const inProgress = current.filter((s) =>
       s.status === "in-progress",
     ).length;
-    const currentToDo = currentSprint.filter((s) =>
-      s.status === "pending-review" || s.status === "approved",
+
+    const toDo = current.filter((s) =>
+      ["pending-review"].includes(s.status),
     ).length;
 
-    const velocity = currentTotal > 0
-      ? Math.round((currentDone / currentTotal) * 100)
+    const velocity = current.length > 0
+      ? Math.round((done / current.length) * 100)
       : 0;
 
     res.json({
       success: true,
       sprintHealth: {
         currentSprint: {
-          total: currentTotal,
-          done: currentDone,
-          inProgress: currentInProgress,
-          toDo: currentToDo,
+          total: current.length,
+          done,
+          inProgress,
+          toDo,
           velocity,
         },
         nextSprint: {
-          total: nextSprint.length,
-          planned: nextSprint.filter((s) => s.status === "approved").length,
+          total: next.length,
+          planned: next.filter((s) => s.status === "approved").length,
         },
       },
     });

@@ -11,6 +11,8 @@ interface DashboardStats {
   todayStories: number;
   todayMessages: number;
   aiGeneratedStories: number;
+  slackStories: number;
+  documentStories: number;
   connectedWorkspaces: number;
 }
 
@@ -169,12 +171,12 @@ export default function DashboardPage() {
               bg: "#eff6ff",
             },
             {
-              label: "Pending Review",
-              value: stats?.pendingReview || 0,
-              sub: "Awaiting BA approval",
-              icon: "⏳",
-              color: "#f59e0b",
-              bg: "#fffbeb",
+              label: "Slack Messages",
+              value: stats?.totalMessages || 0,
+              sub: `${stats?.slackStories || 0} stories from Slack`,
+              icon: "💬",
+              color: "#7c3aed",
+              bg: "#faf5ff",
             },
             {
               label: "Pushed to ADO",
@@ -185,12 +187,12 @@ export default function DashboardPage() {
               bg: "#f0fdf4",
             },
             {
-              label: "Slack Messages",
-              value: stats?.totalMessages || 0,
-              sub: `${stats?.todayMessages || 0} received today`,
-              icon: "💬",
-              color: "#7c3aed",
-              bg: "#faf5ff",
+              label: "Pending Review",
+              value: stats?.pendingReview || 0,
+              sub: `${stats?.documentStories || 0} from documents`,
+              icon: "⏳",
+              color: "#f59e0b",
+              bg: "#fffbeb",
             },
           ].map((card, i) => (
             <div key={i} style={{
