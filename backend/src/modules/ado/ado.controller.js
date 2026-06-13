@@ -175,3 +175,79 @@ export const updateStoryFromADO = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+export const bulkPushToADO = async (req, res) => {
+  try {
+    const { createADOWorkItem } = await import(
+      "../../services/ado/ado.service.js"
+    );
+
+    console.log("[bulk-push] Finding stories not in ADO...");
+
+    const stories = await Story.find({
+      status: { $in: ["approved", "pushed-to-ado"] },
+      $or: [
+        { adoId: null },
+        { adoId: { $exists: false } },
+        { adoId: "" },
+      ],
+    }).populate("clientId", "name");
+
+    console.log("[bulk-push] Found", stories.length, "stories to push");
+
+    const results = {
+      success: [],
+      failed: [],
+      total: stories.length,
+    };
+
+    for (const story of stories) {
+      try {
+        console.log("[bulk-push] Pushing:", story.storyTitle?.substring(0, 50));
+
+        const adoId = await createADOWorkItem(story);
+
+        const org = process.env.ADO_ORG;
+        const project = process.env.ADO_PROJECT;
+        const adoUrl = `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_workitems/edit/${adoId}`;
+
+        story.adoId = String(adoId);
+        story.adoUrl = adoUrl;
+        story.status = "pushed-to-ado";
+        await story.save();
+
+        results.success.push({
+          storyId: story._id,
+          storyTitle: story.storyTitle || story.title,
+          adoId,
+          adoUrl,
+        });
+
+        console.log("[bulk-push] ✅ Pushed:", story.storyTitle?.substring(0, 40), "→ ADO #" + adoId);
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error("[bulk-push] ❌ Failed:", story.storyTitle?.substring(0, 40), error.message);
+        results.failed.push({
+          storyId: story._id,
+          storyTitle: story.storyTitle || story.title,
+          error: error.message,
+        });
+      }
+    }
+
+    console.log("[bulk-push] Done. Success:", results.success.length, "Failed:", results.failed.length);
+
+    res.json({
+      success: true,
+      message: `Pushed ${results.success.length} stories to ADO. Failed: ${results.failed.length}`,
+      pushed: results.success.length,
+      failed: results.failed.length,
+      total: results.total,
+      details: results,
+    });
+  } catch (error) {
+    console.error("[bulk-push] Error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

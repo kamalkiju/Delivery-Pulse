@@ -39,6 +39,14 @@ interface SyncResult {
   error?: string;
 }
 
+interface BulkResult {
+  pushed?: number;
+  failed?: number;
+  total?: number;
+  message?: string;
+  error?: string;
+}
+
 const ORG = "kamal02211994";
 const PROJECT = "Delivery%20pulse";
 
@@ -49,6 +57,8 @@ export default function AdoBoardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [isBulkPushing, setIsBulkPushing] = useState(false);
+  const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
   const [filterState, setFilterState] = useState("all");
 
   const fetchBoard = async () => {
@@ -83,6 +93,32 @@ export default function AdoBoardPage() {
       setSyncResult({ error: `Sync failed: ${msg}` });
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleBulkPush = async () => {
+    if (!window.confirm(
+      "Push all approved stories without ADO ID to Azure DevOps?\n\nThis may take a few minutes.",
+    )) {
+      return;
+    }
+
+    setIsBulkPushing(true);
+    setBulkResult(null);
+
+    try {
+      const response = await api.post("/ado/bulk-push");
+      const { pushed, failed, total, message } = response.data;
+
+      setBulkResult({ pushed, failed, total, message });
+      console.log("[bulk-push] Result:", response.data);
+
+      await handleSync();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Unknown error";
+      setBulkResult({ error: `Bulk push failed: ${msg}` });
+    } finally {
+      setIsBulkPushing(false);
     }
   };
 
@@ -198,6 +234,27 @@ export default function AdoBoardPage() {
 
               <button
                 type="button"
+                onClick={handleBulkPush}
+                disabled={isBulkPushing}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 20px",
+                  backgroundColor: isBulkPushing ? "#94a3b8" : "#7c3aed",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: isBulkPushing ? "not-allowed" : "pointer",
+                }}
+              >
+                {isBulkPushing ? "⏳ Pushing..." : "⬆️ Push Missing to ADO"}
+              </button>
+
+              <button
+                type="button"
                 onClick={handleSync}
                 disabled={isSyncing}
                 style={{
@@ -232,6 +289,22 @@ export default function AdoBoardPage() {
               {syncResult.error
                 ? `❌ ${syncResult.error}`
                 : `✅ Synced ${syncResult.synced} updated stories from ${syncResult.total} total ADO work items`}
+            </div>
+          )}
+
+          {bulkResult && (
+            <div style={{
+              marginTop: 8,
+              padding: "10px 14px",
+              backgroundColor: bulkResult.error ? "#fef2f2" : "#f0fdf4",
+              border: `1px solid ${bulkResult.error ? "#fca5a5" : "#86efac"}`,
+              borderRadius: 8,
+              fontSize: 13,
+              color: bulkResult.error ? "#dc2626" : "#16a34a",
+            }}>
+              {bulkResult.error
+                ? `❌ ${bulkResult.error}`
+                : `✅ ${bulkResult.message}`}
             </div>
           )}
 
