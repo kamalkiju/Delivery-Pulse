@@ -31,17 +31,16 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+// POST regenerate-ac routes MUST be registered before /:id routes.
+// If bulk comes after :id, Express treats "bulk" as an :id param → 404.
+router.post("/regenerate-ac/bulk", authMiddleware, bulkRegenerateAC);
+router.post("/regenerate-ac/:id", authMiddleware, regenerateAC);
+
 // GET /api/stories — list with optional ?status=&source=&projectId= filters
 router.get("/", getStories);
 
 // GET /api/stories/ado-users — assignable ADO users for assignee dropdown
 router.get("/ado-users", getADOUsers);
-
-// POST /api/stories/regenerate-ac/bulk — regenerate AC for all Slack stories needing it
-router.post("/regenerate-ac/bulk", bulkRegenerateAC);
-
-// POST /api/stories/regenerate-ac/:id — regenerate AC for a single story
-router.post("/regenerate-ac/:id", regenerateAC);
 
 // DELETE /api/stories/delete-documents — temporary testing cleanup
 router.delete("/delete-documents", deleteDocumentStories);
