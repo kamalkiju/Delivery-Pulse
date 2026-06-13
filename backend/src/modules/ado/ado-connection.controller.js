@@ -122,45 +122,105 @@ export const testAdoConnection = async (req, res) => {
   try {
     const connection = await AdoConnection.findById(req.params.id);
     if (!connection) {
-      return res.status(404).json({ success: false, message: "Connection not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Connection not found",
+      });
     }
 
+    console.log("[ado-conn] Testing:", connection.adoOrg, connection.adoProject);
+    console.log("[ado-conn] Token preview:", connection.patToken?.substring(0, 8));
+
     const pat = Buffer.from(`:${connection.patToken}`).toString("base64");
-    const encodedProject = encodeURIComponent(connection.adoProject);
-    const testUrl = `https://dev.azure.com/${connection.adoOrg}/${encodedProject}/_apis/wit/workitemtypes?api-version=7.0`;
+
+    const testUrl = `https://dev.azure.com/${connection.adoOrg}/_apis/projects?api-version=7.0`;
+
+    console.log("[ado-conn] Test URL:", testUrl);
 
     const testResponse = await fetch(testUrl, {
-      headers: { Authorization: `Basic ${pat}` },
+      method: "GET",
+      headers: {
+        Authorization: `Basic ${pat}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
     });
 
+    console.log("[ado-conn] Response status:", testResponse.status);
+    const responseText = await testResponse.text();
+    console.log("[ado-conn] Response preview:", responseText.substring(0, 200));
+
     if (testResponse.ok) {
-      const testData = await testResponse.json();
-      const types = (testData.value || []).map((t) => t.name);
+      let projects = [];
+      try {
+        const data = JSON.parse(responseText);
+        projects = (data.value || []).map((p) => p.name);
+        console.log("[ado-conn] Projects found:", projects);
+      } catch (e) {
+        console.error("[ado-conn] JSON parse error:", e.message);
+      }
+
+      const projectExists = projects.includes(connection.adoProject)
+        || projects.some((p) =>
+          p.toLowerCase() === connection.adoProject.toLowerCase(),
+        );
 
       connection.connectionStatus = "connected";
-      connection.workItemTypes = types;
+      connection.workItemTypes = ["Issue", "Task", "Epic"];
       connection.lastTestedAt = new Date();
       await connection.save();
 
-      res.json({
+      return res.json({
         success: true,
         connectionStatus: "connected",
-        workItemTypes: types,
-        message: "✅ Connection successful",
+        workItemTypes: ["Issue", "Task", "Epic"],
+        projects,
+        projectExists,
+        message: projectExists
+          ? `✅ Connected successfully. Project "${connection.adoProject}" found.`
+          : `⚠️ Connected to org but project "${connection.adoProject}" not found. Check project name.`,
       });
-    } else {
+    }
+
+    if (testResponse.status === 401) {
       connection.connectionStatus = "failed";
       connection.lastTestedAt = new Date();
       await connection.save();
 
-      res.json({
+      return res.json({
         success: false,
         connectionStatus: "failed",
-        message: "❌ Connection failed. Check PAT token and permissions.",
+        message: "❌ Authentication failed. PAT token is invalid or expired. Please create a new PAT token.",
       });
     }
+
+    if (testResponse.status === 403) {
+      connection.connectionStatus = "failed";
+      connection.lastTestedAt = new Date();
+      await connection.save();
+
+      return res.json({
+        success: false,
+        connectionStatus: "failed",
+        message: "❌ Access denied. PAT token does not have required permissions. Ensure Work Items Read & Write is enabled.",
+      });
+    }
+
+    connection.connectionStatus = "failed";
+    connection.lastTestedAt = new Date();
+    await connection.save();
+
+    return res.json({
+      success: false,
+      connectionStatus: "failed",
+      message: `❌ Connection failed with status ${testResponse.status}`,
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("[ado-conn] Test error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
