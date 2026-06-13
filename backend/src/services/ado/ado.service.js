@@ -108,10 +108,20 @@ export const createADOWorkItem = async (story) => {
 
   const responseText = await response.text();
   console.log("[ado] Response status:", response.status);
+  console.log("[ado] Response preview:", responseText.substring(0, 100));
+
+  if (response.status === 203
+    || responseText.includes("<!DOCTYPE")
+    || responseText.includes("<html")) {
+    throw new Error(
+      "ADO returned HTML page. PAT token may be expired or invalid. "
+      + "Please create a new PAT token at dev.azure.com and update in Settings.",
+    );
+  }
 
   if (!response.ok) {
     console.error("[ado] Error:", responseText.substring(0, 500));
-    throw new Error(`ADO ${response.status}: ${responseText.substring(0, 200)}`);
+    throw new Error(`ADO error ${response.status}: ${responseText.substring(0, 200)}`);
   }
 
   const result = JSON.parse(responseText);

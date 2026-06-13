@@ -57,13 +57,23 @@ export const syncADOStories = async (req, res) => {
       body: JSON.stringify(wiqlBody),
     });
 
+    const responseText = await wiqlResponse.text();
+    console.log("[ado-sync] Status:", wiqlResponse.status);
+
+    if (responseText.includes("<!DOCTYPE")
+      || responseText.includes("<html")) {
+      throw new Error(
+        "ADO authentication failed. PAT token expired. "
+        + "Please update PAT token in Settings → ADO Integration.",
+      );
+    }
+
     if (!wiqlResponse.ok) {
-      const err = await wiqlResponse.text();
-      console.error("[ado-sync] WIQL error:", err);
+      console.error("[ado-sync] WIQL error:", responseText.substring(0, 200));
       throw new Error(`Failed to query ADO: ${wiqlResponse.status}`);
     }
 
-    const wiqlData = await wiqlResponse.json();
+    const wiqlData = JSON.parse(responseText);
     const workItemIds = (wiqlData.workItems || [])
       .map((wi) => wi.id)
       .slice(0, 100);
