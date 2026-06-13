@@ -73,7 +73,28 @@ export default function AdoBoardPage() {
   };
 
   useEffect(() => {
-    fetchBoard();
+    const loadBoard = async () => {
+      await fetchBoard();
+      setIsSyncing(true);
+      setSyncResult(null);
+      try {
+        const response = await api.get("/ado/sync");
+        const { synced, total, workItems: items, message } = response.data;
+        setWorkItems(items || []);
+        setSyncResult({ synced, total, message });
+        setLastSynced(new Date());
+        await fetchBoard();
+        console.log("[sync] Synced", synced, "of", total, "items");
+      } catch (error: unknown) {
+        console.error("Sync failed:", error);
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        setSyncResult({ error: `Sync failed: ${msg}` });
+      } finally {
+        setIsSyncing(false);
+      }
+    };
+
+    loadBoard();
   }, []);
 
   const handleSync = async () => {
@@ -123,15 +144,61 @@ export default function AdoBoardPage() {
   };
 
   const stateColors: Record<string, { bg: string; text: string; border: string }> = {
-    New: { bg: "#f1f5f9", text: "#64748b", border: "#cbd5e1" },
-    Open: { bg: "#f1f5f9", text: "#64748b", border: "#cbd5e1" },
-    Active: { bg: "#eff6ff", text: "#2563eb", border: "#93c5fd" },
-    Resolved: { bg: "#f0fdf4", text: "#16a34a", border: "#86efac" },
-    Closed: { bg: "#f8fafc", text: "#94a3b8", border: "#e2e8f0" },
-    "pushed-to-ado": { bg: "#eff6ff", text: "#2563eb", border: "#93c5fd" },
-    "in-progress": { bg: "#fff7ed", text: "#c2410c", border: "#fed7aa" },
-    done: { bg: "#f0fdf4", text: "#16a34a", border: "#86efac" },
-    approved: { bg: "#faf5ff", text: "#7c3aed", border: "#d8b4fe" },
+    "To Do": {
+      bg: "#f1f5f9",
+      text: "#64748b",
+      border: "#cbd5e1",
+    },
+    Doing: {
+      bg: "#eff6ff",
+      text: "#2563eb",
+      border: "#93c5fd",
+    },
+    Done: {
+      bg: "#f0fdf4",
+      text: "#16a34a",
+      border: "#86efac",
+    },
+    Active: {
+      bg: "#eff6ff",
+      text: "#2563eb",
+      border: "#93c5fd",
+    },
+    Resolved: {
+      bg: "#f0fdf4",
+      text: "#16a34a",
+      border: "#86efac",
+    },
+    Closed: {
+      bg: "#f8fafc",
+      text: "#94a3b8",
+      border: "#e2e8f0",
+    },
+    New: {
+      bg: "#f1f5f9",
+      text: "#64748b",
+      border: "#cbd5e1",
+    },
+    "pushed-to-ado": {
+      bg: "#fff7ed",
+      text: "#c2410c",
+      border: "#fed7aa",
+    },
+    "in-progress": {
+      bg: "#eff6ff",
+      text: "#2563eb",
+      border: "#93c5fd",
+    },
+    done: {
+      bg: "#f0fdf4",
+      text: "#16a34a",
+      border: "#86efac",
+    },
+    approved: {
+      bg: "#faf5ff",
+      text: "#7c3aed",
+      border: "#d8b4fe",
+    },
   };
 
   const priorityColors: Record<string | number, { label: string; color: string }> = {
@@ -150,7 +217,7 @@ export default function AdoBoardPage() {
     : localStories.map((s) => ({
         adoId: s.adoId ?? "",
         title: s.storyTitle || s.title || "Untitled",
-        state: s.adoStatus || (s.status === "pushed-to-ado" ? "New" : s.status),
+        state: s.adoStatus || "To Do",
         type: s.type,
         priority: s.priority,
         assignedTo: s.assigneeName || s.assignee,
@@ -163,16 +230,44 @@ export default function AdoBoardPage() {
 
   const filteredItems = filterState === "all"
     ? displayItems
-    : displayItems.filter((item) =>
-        (item.state || "").toLowerCase() === filterState.toLowerCase(),
-      );
+    : displayItems.filter((item) => {
+        const state = (item.state || "").toLowerCase();
+        if (filterState === "todo") {
+          return state === "to do"
+            || state === "new"
+            || state === "pushed-to-ado";
+        }
+        if (filterState === "doing") {
+          return state === "doing"
+            || state === "active"
+            || state === "in-progress";
+        }
+        if (filterState === "done") {
+          return state === "done"
+            || state === "closed"
+            || state === "resolved";
+        }
+        return state === filterState;
+      });
 
   const stateCounts = {
     all: displayItems.length,
-    new: displayItems.filter((i) => i.state === "New" || i.state === "Open").length,
-    active: displayItems.filter((i) => i.state === "Active" || i.state === "in-progress").length,
-    resolved: displayItems.filter((i) => i.state === "Resolved").length,
-    closed: displayItems.filter((i) => i.state === "Closed" || i.state === "done").length,
+    todo: displayItems.filter((i) =>
+      i.state === "To Do"
+      || i.state === "New"
+      || i.state === "pushed-to-ado",
+    ).length,
+    doing: displayItems.filter((i) =>
+      i.state === "Doing"
+      || i.state === "Active"
+      || i.state === "in-progress",
+    ).length,
+    done: displayItems.filter((i) =>
+      i.state === "Done"
+      || i.state === "Closed"
+      || i.state === "Resolved"
+      || i.state === "done",
+    ).length,
   };
 
   return (
@@ -311,10 +406,9 @@ export default function AdoBoardPage() {
           <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
             {[
               { key: "all", label: "All", count: stateCounts.all, color: "#64748b" },
-              { key: "new", label: "New", count: stateCounts.new, color: "#64748b" },
-              { key: "active", label: "Active", count: stateCounts.active, color: "#2563eb" },
-              { key: "resolved", label: "Resolved", count: stateCounts.resolved, color: "#16a34a" },
-              { key: "closed", label: "Closed", count: stateCounts.closed, color: "#94a3b8" },
+              { key: "todo", label: "To Do", count: stateCounts.todo, color: "#64748b" },
+              { key: "doing", label: "Doing", count: stateCounts.doing, color: "#2563eb" },
+              { key: "done", label: "Done", count: stateCounts.done, color: "#16a34a" },
             ].map((stat) => (
               <button
                 key={stat.key}
@@ -380,7 +474,8 @@ export default function AdoBoardPage() {
               gap: 16,
             }}>
               {filteredItems.map((item, index) => {
-                const stateColor = stateColors[item.state || "New"] || stateColors.New;
+                const adoState = item.state || "To Do";
+                const stateColor = stateColors[adoState] || stateColors["To Do"];
                 const priorityInfo = item.priority != null
                   ? priorityColors[item.priority]
                   : undefined;
@@ -417,7 +512,7 @@ export default function AdoBoardPage() {
                         fontSize: 12,
                         fontWeight: 500,
                       }}>
-                        {item.state || "New"}
+                        {adoState}
                       </span>
                       {priorityInfo && (
                         <span style={{

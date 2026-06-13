@@ -15,11 +15,16 @@ const getADOClient = () => {
 };
 
 const ADO_STATUS_MAP = {
+  "To Do": "pushed-to-ado",
+  Doing: "in-progress",
+  Done: "done",
   Active: "in-progress",
   Resolved: "resolved",
   Closed: "done",
   New: "pushed-to-ado",
   Open: "pushed-to-ado",
+  "In Progress": "in-progress",
+  Completed: "done",
 };
 
 export const syncADOStories = async (req, res) => {
