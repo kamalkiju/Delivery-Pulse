@@ -118,6 +118,38 @@ export const approveStory = async (req, res) => {
     await story.save();
     console.log("[approve] Story saved with status:", story.status);
 
+    if (story.assignee) {
+      try {
+        const { sendTeamsNotification } = await import(
+          "../../services/teams/teams.service.js"
+        );
+
+        const User = (await import("../../models/User.model.js")).default;
+        const approver = await User.findById(req.user.userId ?? req.user.id);
+
+        await sendTeamsNotification({
+          assigneeName: story.assigneeName || story.assignee,
+          assigneeEmail: story.assignee,
+          storyTitle: story.storyTitle || story.title,
+          description: story.description,
+          priority: story.priority,
+          type: story.type,
+          sprint: story.sprint,
+          acceptanceCriteria: story.acceptanceCriteriaFormatted
+            || story.acceptanceCriteria || [],
+          adoId,
+          adoUrl,
+          tags: story.tags || [],
+          approvedBy: approver?.name || approver?.email || "BA",
+          clientName: story.clientId?.name || "Client",
+        });
+
+        console.log("[approve] Teams notification sent");
+      } catch (teamsError) {
+        console.error("[approve] Teams notification failed:", teamsError.message);
+      }
+    }
+
     res.json({
       success: true,
       adoId,

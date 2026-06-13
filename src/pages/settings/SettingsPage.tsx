@@ -19,6 +19,7 @@ import {
   type SlackClientOption,
   type SlackWorkspaceSummary,
 } from "../../api/slack.integration.api";
+import api from "../../api/axios";
 import { borderRadius, colors, spacing, typography } from "../../styles/tokens"; // Tokens ensure every color/spacing matches DeliveryPulse
 
 // ── Types ────────────────────────────────────────────────────
@@ -88,6 +89,22 @@ export default function SettingsPage() {
   const [clients, setClients] = useState<SlackClientOption[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [channelSearch, setChannelSearch] = useState("");
+  const [teamsWebhookUrl, setTeamsWebhookUrl] = useState(
+    () => localStorage.getItem("teams-webhook-url") || "",
+  );
+
+  const handleSaveTeamsWebhook = async () => {
+    try {
+      localStorage.setItem("teams-webhook-url", teamsWebhookUrl);
+      await api.post("/settings/teams-webhook", {
+        webhookUrl: teamsWebhookUrl,
+      });
+      alert("✅ Teams webhook saved successfully");
+    } catch {
+      localStorage.setItem("teams-webhook-url", teamsWebhookUrl);
+      alert("✅ Teams webhook saved locally (restart backend or set TEAMS_WEBHOOK_URL on Render for production)");
+    }
+  };
 
   const slackConnected = slackWorkspaces.length > 0;
   const activeWorkspace = slackWorkspaces.find((w) => w.id === activeWorkspaceId) ?? slackWorkspaces[0] ?? null;
@@ -252,7 +269,7 @@ export default function SettingsPage() {
     if (activeSection === "teams-setup") {
       return {
         title: "Microsoft Teams Integration",
-        sub: "Connect Teams to sync meetings and transcripts",
+        sub: "Get notified in Teams when stories are assigned to developers",
       };
     }
     return {
@@ -848,59 +865,91 @@ export default function SettingsPage() {
 
           {/* Teams Setup content */}
           {activeSection === "teams-setup" && (
-            <div
-              style={{
+            <div style={{ maxWidth: 640 }}>
+              <div style={{
                 backgroundColor: colors["surface-card"],
                 border: `1px solid ${colors["border-default"]}`,
                 borderRadius: borderRadius.lg,
                 padding: spacing[6],
-                maxWidth: 520,
-              }}
-            >
-              {/* Empty state logo placeholder */}
-              <div
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: borderRadius.md,
-                  backgroundColor: colors["surface-blue-tint"],
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: spacing[4],
-                }}
-                aria-hidden
-              >
-                🎥
+              }}>
+                <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+                  <div style={{ fontSize: 32 }}>💼</div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
+                      Teams Webhook
+                    </h3>
+                    <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748b" }}>
+                      Get notified in Teams when stories are assigned to developers
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#374151",
+                    display: "block",
+                    marginBottom: 6,
+                  }}>
+                    Incoming Webhook URL
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="https://outlook.office.com/webhook/..."
+                    value={teamsWebhookUrl}
+                    onChange={(e) => setTeamsWebhookUrl(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      fontSize: 14,
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+
+                <div style={{
+                  backgroundColor: "#f8fafc",
+                  borderRadius: 8,
+                  padding: "12px 16px",
+                  marginBottom: 16,
+                  fontSize: 13,
+                  color: "#64748b",
+                }}>
+                  <p style={{ margin: "0 0 8px", fontWeight: 600 }}>
+                    How to get webhook URL:
+                  </p>
+                  <ol style={{ margin: 0, paddingLeft: 20 }}>
+                    <li>Open Microsoft Teams</li>
+                    <li>Go to the notification channel</li>
+                    <li>Click ... → Connectors</li>
+                    <li>Configure Incoming Webhook</li>
+                    <li>Copy and paste the URL here</li>
+                  </ol>
+                  <p style={{ margin: "12px 0 0", fontSize: 12 }}>
+                    For production, also add <strong>TEAMS_WEBHOOK_URL</strong> to Render environment variables.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSaveTeamsWebhook}
+                  style={{
+                    backgroundColor: "#6264a7",
+                    color: "white",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "10px 20px",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Save Teams Webhook
+                </button>
               </div>
-
-              <div style={{ fontSize: "20px", fontWeight: 700, color: colors["text-primary"] }}>
-                Connect Microsoft Teams
-              </div>
-
-              <ul style={{ margin: `${spacing[4]} 0 0 18px`, color: colors["text-secondary"], fontSize: typography.bodySm.size }}>
-                <li style={{ marginBottom: 6 }}>Sync meetings automatically</li>
-                <li style={{ marginBottom: 6 }}>Extract action items & commitments</li>
-                <li style={{ marginBottom: 6 }}>Generate stories from transcripts</li>
-              </ul>
-
-              <button
-                type="button"
-                style={{
-                  marginTop: spacing[5],
-                  width: "100%",
-                  height: 40,
-                  borderRadius: borderRadius.md,
-                  border: "none",
-                  backgroundColor: "#0f766e", // Spec teal
-                  color: colors["text-on-dark"],
-                  fontSize: typography.bodySm.size,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Connect Teams Now
-              </button>
             </div>
           )}
 
