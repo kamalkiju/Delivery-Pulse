@@ -203,7 +203,8 @@ export const bulkPushToADO = async (req, res) => {
 
     for (const story of stories) {
       try {
-        console.log("[bulk-push] Pushing:", story.storyTitle?.substring(0, 50));
+        const storyTitle = story.storyTitle || story.title || "Untitled Story";
+        console.log("[bulk-push] Pushing:", storyTitle);
 
         const adoId = await createADOWorkItem(story);
 
@@ -218,19 +219,20 @@ export const bulkPushToADO = async (req, res) => {
 
         results.success.push({
           storyId: story._id,
-          storyTitle: story.storyTitle || story.title,
+          storyTitle,
           adoId,
           adoUrl,
         });
 
-        console.log("[bulk-push] ✅ Pushed:", story.storyTitle?.substring(0, 40), "→ ADO #" + adoId);
+        console.log("[bulk-push] ✅ Pushed:", storyTitle.substring(0, 40), "→ ADO #" + adoId);
 
         await new Promise((resolve) => setTimeout(resolve, 500));
       } catch (error) {
-        console.error("[bulk-push] ❌ Failed:", story.storyTitle?.substring(0, 40), error.message);
+        const storyTitle = story.storyTitle || story.title || "Untitled Story";
+        console.error("[bulk-push] ❌ Failed:", storyTitle.substring(0, 40), error.message);
         results.failed.push({
           storyId: story._id,
-          storyTitle: story.storyTitle || story.title,
+          storyTitle,
           error: error.message,
         });
       }

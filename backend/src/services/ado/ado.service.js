@@ -16,7 +16,9 @@ export const createADOWorkItem = async (story) => {
   console.log("[ado] token preview:", token.substring(0, 8) + "...");
 
   const pat = Buffer.from(`:${token}`).toString("base64");
-  const workItemType = "Issue";
+  const workItemType = 'Issue';
+
+  console.log("[ado] workItemType:", workItemType);
 
   const nl = (text) => (text || "").replace(/\n/g, "<br/>");
 
