@@ -251,6 +251,232 @@ export async function updateStory(req, res) {
   }
 }
 
+/** POST /api/stories/regenerate-ac/:id — regenerate acceptance criteria via Claude */
+export const regenerateAC = async (req, res) => {
+  try {
+    const story = await Story.findById(req.params.id || req.body.storyId)
+      .populate("clientId", "name");
+
+    if (!story) {
+      return res.status(404).json({
+        success: false,
+        message: "Story not found",
+      });
+    }
+
+    const { analyzeMessage } = await import("../../services/ai/ai.service.js");
+
+    const messageText = story.sourceQuote
+      || story.description
+      || story.title;
+
+    console.log("[regen-ac] Regenerating AC for:",
+      story.storyTitle?.substring(0, 50));
+
+    const result = await analyzeMessage({
+      text: messageText,
+      clientName: story.clientId?.name || "Client",
+    });
+
+    if (result.acceptanceCriteria?.length > 0) {
+      story.acceptanceCriteria = result.acceptanceCriteria
+        .map((ac) => (typeof ac === "string" ? ac : ac.scenario || ""))
+        .filter(Boolean);
+
+      story.acceptanceCriteriaFormatted = (result.acceptanceCriteriaFormatted?.length
+        ? result.acceptanceCriteriaFormatted
+        : result.acceptanceCriteria)
+        .map((ac, i) => ({
+          id: (typeof ac === "object" && ac.id) ? ac.id : `AC ${i + 1}`,
+          scenario: typeof ac === "string" ? ac : ac.scenario || "",
+        }))
+        .filter((ac) => ac.scenario);
+
+      if (result.description
+        && result.description.includes("As a")
+        && result.description.includes("So that")) {
+        story.description = result.description;
+        story.descriptionStatement = result.description;
+      }
+
+      if (result.businessRequirement) {
+        story.businessRequirement = result.businessRequirement;
+      }
+      if (result.userFlow) {
+        story.userFlow = result.userFlow;
+      }
+      if (result.uiBehavior) {
+        story.uiBehavior = result.uiBehavior;
+      }
+      if (result.validations?.length > 0) {
+        story.validations = result.validations;
+      }
+      if (result.releaseNotes) {
+        story.releaseNotes = result.releaseNotes;
+      }
+
+      await story.save();
+
+      console.log("[regen-ac] Updated AC count:",
+        story.acceptanceCriteriaFormatted.length);
+
+      return res.json({
+        success: true,
+        story,
+        acCount: story.acceptanceCriteriaFormatted.length,
+        message: `AC regenerated with ${story.acceptanceCriteriaFormatted.length} criteria`,
+      });
+    }
+
+    res.json({
+      success: false,
+      message: "AI could not generate AC for this story",
+    });
+  } catch (error) {
+    console.error("[regen-ac] Error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/** POST /api/stories/regenerate-ac/bulk — bulk regenerate AC for Slack stories */
+export const bulkRegenerateAC = async (req, res) => {
+  try {
+    const { analyzeMessage } = await import("../../services/ai/ai.service.js");
+
+    const stories = await Story.find({
+      source: "slack",
+      $or: [
+        { acceptanceCriteria: { $size: 0 } },
+        { acceptanceCriteriaFormatted: { $size: 0 } },
+        { acceptanceCriteria: { $exists: false } },
+        {
+          acceptanceCriteriaFormatted: {
+            $exists: true,
+            $not: { $elemMatch: { scenario: /Given.*When.*Then/i } },
+          },
+        },
+      ],
+    }).populate("clientId", "name");
+
+    console.log("[bulk-regen] Found", stories.length,
+      "stories needing AC regeneration");
+
+    const results = { success: [], failed: [], total: stories.length };
+
+    for (const story of stories) {
+      try {
+        const messageText = story.sourceQuote
+          || story.description
+          || story.storyTitle
+          || story.title;
+
+        if (!messageText) {
+          results.failed.push({
+            id: story._id,
+            title: story.storyTitle || story.title,
+            reason: "No source text found",
+          });
+          continue;
+        }
+
+        console.log("[bulk-regen] Processing:",
+          (story.storyTitle || story.title)?.substring(0, 50));
+
+        const result = await analyzeMessage({
+          text: messageText,
+          clientName: story.clientId?.name || "Client",
+        });
+
+        if (result.acceptanceCriteria?.length > 0) {
+          story.acceptanceCriteria = result.acceptanceCriteria
+            .map((ac) => (typeof ac === "string" ? ac : ac.scenario || ""))
+            .filter(Boolean);
+
+          story.acceptanceCriteriaFormatted = (result.acceptanceCriteriaFormatted?.length
+            ? result.acceptanceCriteriaFormatted
+            : result.acceptanceCriteria)
+            .map((ac, i) => ({
+              id: (typeof ac === "object" && ac.id) ? ac.id : `AC ${i + 1}`,
+              scenario: typeof ac === "string" ? ac : ac.scenario || "",
+            }))
+            .filter((ac) => ac.scenario);
+
+          if (result.description?.includes("As a")
+            && result.description?.includes("So that")) {
+            story.description = result.description;
+            story.descriptionStatement = result.description;
+          }
+
+          if (result.storyTitle
+            && result.storyTitle !== story.sourceQuote) {
+            story.storyTitle = result.storyTitle;
+            story.title = result.storyTitle;
+          }
+
+          if (result.businessRequirement) {
+            story.businessRequirement = result.businessRequirement;
+          }
+          if (result.userFlow) {
+            story.userFlow = result.userFlow;
+          }
+          if (result.uiBehavior) {
+            story.uiBehavior = result.uiBehavior;
+          }
+          if (result.validations?.length > 0) {
+            story.validations = result.validations;
+          }
+          if (result.releaseNotes) {
+            story.releaseNotes = result.releaseNotes;
+          }
+
+          await story.save();
+
+          results.success.push({
+            id: story._id,
+            title: story.storyTitle || story.title,
+            acCount: story.acceptanceCriteriaFormatted.length,
+          });
+
+          console.log("[bulk-regen] ✅ Updated:",
+            (story.storyTitle || story.title)?.substring(0, 40),
+            "| AC:", story.acceptanceCriteriaFormatted.length);
+        } else {
+          results.failed.push({
+            id: story._id,
+            title: story.storyTitle || story.title,
+            reason: "AI returned empty AC",
+          });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (storyError) {
+        console.error("[bulk-regen] Failed story:",
+          story._id, storyError.message);
+        results.failed.push({
+          id: story._id,
+          title: story.storyTitle || story.title,
+          reason: storyError.message,
+        });
+      }
+    }
+
+    console.log("[bulk-regen] Done. Success:",
+      results.success.length, "Failed:", results.failed.length);
+
+    res.json({
+      success: true,
+      message: `Regenerated AC for ${results.success.length} stories`,
+      updated: results.success.length,
+      failed: results.failed.length,
+      total: results.total,
+      details: results,
+    });
+  } catch (error) {
+    console.error("[bulk-regen] Error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 /** GET /api/stories/ado-users — list assignable users from ADO */
 export const getADOUsers = async (req, res) => {
   try {

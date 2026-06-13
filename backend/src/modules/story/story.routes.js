@@ -20,6 +20,8 @@ import {
   updateStory,
   getStories,
   getADOUsers,
+  regenerateAC,
+  bulkRegenerateAC,
   deleteDocumentStories,
   deleteStory,
   deleteBySource,
@@ -34,6 +36,12 @@ router.get("/", getStories);
 
 // GET /api/stories/ado-users — assignable ADO users for assignee dropdown
 router.get("/ado-users", getADOUsers);
+
+// POST /api/stories/regenerate-ac/bulk — regenerate AC for all Slack stories needing it
+router.post("/regenerate-ac/bulk", bulkRegenerateAC);
+
+// POST /api/stories/regenerate-ac/:id — regenerate AC for a single story
+router.post("/regenerate-ac/:id", regenerateAC);
 
 // DELETE /api/stories/delete-documents — temporary testing cleanup
 router.delete("/delete-documents", deleteDocumentStories);

@@ -148,9 +148,10 @@ interface StoryCardProps {
   onReject: (storyId: string) => void;
   onApprove: (storyId: string) => void;
   onDelete?: (storyId: string) => void;
+  onRegenerate?: (storyId: string) => void;
 }
 
-function StoryCard({ story, tabSource, deletingId, onEdit, onReject, onApprove, onDelete }: StoryCardProps) {
+function StoryCard({ story, tabSource, deletingId, onEdit, onReject, onApprove, onDelete, onRegenerate }: StoryCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const storyId = sid(story);
   console.log("[card] story._id:", story._id, "story.id:", story.id);
@@ -295,6 +296,24 @@ function StoryCard({ story, tabSource, deletingId, onEdit, onReject, onApprove, 
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" onClick={() => onEdit(story)} style={{ padding: "7px 16px", backgroundColor: "#3b82f6", color: "white", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Edit</button>
+            {tabSource === "slack" && onRegenerate && (
+              <button
+                type="button"
+                onClick={() => onRegenerate(storyId)}
+                style={{
+                  padding: "6px 12px",
+                  backgroundColor: "#faf5ff",
+                  color: "#7c3aed",
+                  border: "1px solid #d8b4fe",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 500,
+                }}
+              >
+                ✨ Regen AC
+              </button>
+            )}
             {tabSource === "document" && onDelete && (
               <button type="button" onClick={() => onDelete(storyId)} disabled={deletingId === storyId} style={{ padding: "7px 12px", backgroundColor: "white", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: 7, cursor: deletingId === storyId ? "not-allowed" : "pointer", fontSize: 13 }}>
                 {deletingId === storyId ? "..." : "🗑️"}
@@ -370,6 +389,13 @@ const ReviewQueuePage = () => {
   });
   const [deletingId, setDeletingId]           = useState<string | null>(null);
   const [adoUsers, setAdoUsers]               = useState<AdoUser[]>([]);
+  const [isRegenerating, setIsRegenerating]   = useState(false);
+  const [regenResult, setRegenResult]         = useState<{
+    updated?: number;
+    failed?: number;
+    message?: string;
+    error?: string;
+  } | null>(null);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
@@ -567,6 +593,41 @@ const ReviewQueuePage = () => {
     }
   };
 
+  const handleBulkRegenerateAC = async () => {
+    if (!window.confirm(
+      "Regenerate acceptance criteria for all Slack stories?\n\n"
+      + "This will update stories that have missing or poor AC.\n"
+      + "May take 1-2 minutes."
+    )) return;
+
+    setIsRegenerating(true);
+    setRegenResult(null);
+
+    try {
+      const response = await api.post("/stories/regenerate-ac/bulk");
+      const { updated, failed, message } = response.data;
+      setRegenResult({ updated, failed, message });
+      fetchAllStories();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setRegenResult({
+        error: `Failed: ${msg}`,
+      });
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  const handleRegenerateAC = async (storyId: string) => {
+    try {
+      await api.post(`/stories/regenerate-ac/${storyId}`);
+      fetchAllStories();
+      alert("✅ AC regenerated successfully");
+    } catch {
+      alert("Failed to regenerate AC");
+    }
+  };
+
   const renderStoryCard = (story: Story, tabSource: string) => (
     <StoryCard
       key={sid(story)}
@@ -577,6 +638,7 @@ const ReviewQueuePage = () => {
       onReject={handleReject}
       onApprove={handleApprove}
       onDelete={tabSource === "document" ? handleDeleteStory : undefined}
+      onRegenerate={tabSource === "slack" ? handleRegenerateAC : undefined}
     />
   );
 
@@ -691,7 +753,50 @@ const ReviewQueuePage = () => {
               {activeTab === "slack" && (
                 slackStories.length === 0
                   ? <EmptyState icon="💬" title="No Slack stories pending review" subtitle="Stories appear here when clients send messages in monitored Slack channels" />
-                  : slackStories.map((s) => renderStoryCard(s, "slack"))
+                  : (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+                        {activeTab === "slack" && slackStories.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleBulkRegenerateAC}
+                            disabled={isRegenerating}
+                            style={{
+                              padding: "7px 14px",
+                              backgroundColor: isRegenerating ? "#94a3b8" : "#7c3aed",
+                              color: "white",
+                              border: "none",
+                              borderRadius: 7,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: isRegenerating ? "not-allowed" : "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            {isRegenerating ? "⏳ Regenerating..." : "✨ Regenerate AC"}
+                          </button>
+                        )}
+                      </div>
+                      {regenResult && (
+                        <div style={{
+                          padding: "8px 14px",
+                          backgroundColor: regenResult.error ? "#fef2f2" : "#f0fdf4",
+                          border: `1px solid ${regenResult.error ? "#fca5a5" : "#86efac"}`,
+                          borderRadius: 8,
+                          fontSize: 13,
+                          color: regenResult.error ? "#dc2626" : "#16a34a",
+                          marginBottom: 16,
+                        }}>
+                          {regenResult.error
+                            ? `❌ ${regenResult.error}`
+                            : `✅ ${regenResult.message}`}
+                        </div>
+                      )}
+                      {slackStories.map((s) => renderStoryCard(s, "slack"))}
+                    </>
+                  )
               )}
               {activeTab === "document" && (
                 documentStories.length === 0
