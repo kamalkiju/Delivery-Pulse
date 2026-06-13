@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, Slack } from "lucide-react"; // Icons for status/error affordances - consistent with the app icon set
+import { Check, Slack } from "lucide-react"; // Icons for status/error affordances - consistent with the app icon set
 import AppShell from "../../components/layout/AppShell";
 import {
   disconnectSlackWorkspace,
@@ -47,6 +47,18 @@ interface RoleRow {
   name: string; // Person name
   username: string; // Slack username
   role: string; // Team role label
+}
+
+interface AdoConnectionItem {
+  _id: string;
+  name: string;
+  adoOrg: string;
+  adoProject: string;
+  patTokenPreview?: string;
+  isDefault: boolean;
+  connectionStatus: "connected" | "failed" | "pending";
+  lastTestedAt?: string;
+  workItemTypes?: string[];
 }
 
 function formatRelativeDate(dateStr: string): string {
@@ -92,6 +104,79 @@ export default function SettingsPage() {
   const [teamsWebhookUrl, setTeamsWebhookUrl] = useState(
     () => localStorage.getItem("teams-webhook-url") || "",
   );
+  const [adoConnections, setAdoConnections] = useState<AdoConnectionItem[]>([]);
+  const [showAddAdo, setShowAddAdo] = useState(false);
+  const [adoForm, setAdoForm] = useState({
+    name: "",
+    adoOrg: "",
+    adoProject: "",
+    patToken: "",
+  });
+  const [isAddingAdo, setIsAddingAdo] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  const fetchAdoConnections = async () => {
+    try {
+      const response = await api.get("/ado-connections");
+      setAdoConnections(response.data.connections || []);
+    } catch (error) {
+      console.error("Failed to fetch ADO connections:", error);
+    }
+  };
+
+  const handleAddAdoConnection = async () => {
+    if (!adoForm.name || !adoForm.adoOrg || !adoForm.adoProject || !adoForm.patToken) {
+      alert("Please fill in all fields");
+      return;
+    }
+
+    setIsAddingAdo(true);
+    try {
+      const response = await api.post("/ado-connections", adoForm);
+      alert(response.data.message);
+      setAdoForm({ name: "", adoOrg: "", adoProject: "", patToken: "" });
+      setShowAddAdo(false);
+      fetchAdoConnections();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Unknown error";
+      alert(`Failed to add connection: ${msg}`);
+    } finally {
+      setIsAddingAdo(false);
+    }
+  };
+
+  const handleTestConnection = async (id: string) => {
+    setTestingId(id);
+    try {
+      const response = await api.post(`/ado-connections/${id}/test`);
+      alert(response.data.message);
+      fetchAdoConnections();
+    } catch {
+      alert("Test failed");
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const handleSetDefault = async (id: string) => {
+    try {
+      const response = await api.patch(`/ado-connections/${id}/set-default`);
+      alert(response.data.message);
+      fetchAdoConnections();
+    } catch {
+      alert("Failed to set default");
+    }
+  };
+
+  const handleDeleteConnection = async (id: string) => {
+    if (!window.confirm("Remove this ADO connection?")) return;
+    try {
+      await api.delete(`/ado-connections/${id}`);
+      fetchAdoConnections();
+    } catch {
+      alert("Failed to remove connection");
+    }
+  };
 
   const handleSaveTeamsWebhook = async () => {
     try {
@@ -211,8 +296,11 @@ export default function SettingsPage() {
   // autoReplyEnabled - toggles the auto-reply switch and the textarea enablement
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(true); // ON state by default - aligns with typical setup flows
 
-  // tokenExpired - controls the ADO Setup error card state
-  const [tokenExpired, setTokenExpired] = useState(true); // True by default - shows the token-expired reconnect guide
+  // tokenExpired - removed; ADO connections loaded from API
+
+  useEffect(() => {
+    fetchAdoConnections();
+  }, []);
 
   // Current nav lists - grouped by section label to match your left-nav spec
   const navGroups = useMemo(
@@ -263,7 +351,7 @@ export default function SettingsPage() {
     if (activeSection === "ado-setup") {
       return {
         title: "Azure DevOps Integration",
-        sub: "Sync stories and review queue with your ADO project",
+        sub: "Connect multiple ADO organizations and projects",
       };
     }
     if (activeSection === "teams-setup") {
@@ -786,78 +874,411 @@ export default function SettingsPage() {
 
           {/* ADO Setup content */}
           {activeSection === "ado-setup" && (
-            <div>
-              {/* Error card shown when tokenExpired is true */}
-              {tokenExpired && (
-                <div
+            <div style={{ marginBottom: 32, maxWidth: 900 }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 16,
+                flexWrap: "wrap",
+                gap: 12,
+              }}>
+                <div>
+                  <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>
+                    Azure DevOps Integration
+                  </h2>
+                  <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
+                    Connect multiple ADO organizations and projects
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddAdo(!showAddAdo)}
                   style={{
-                    backgroundColor: colors["danger-bg"], // Spec: bg #fee2e2
-                    border: "1px solid #fca5a5", // Spec: border #fca5a5
-                    borderRadius: borderRadius.lg, // Matches card rounding style
-                    padding: spacing[4],
-                    marginBottom: spacing[5],
+                    backgroundColor: "#0078d4",
+                    color: "white",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "8px 16px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
                   }}
                 >
-                  <div style={{ display: "flex", gap: spacing[3], alignItems: "flex-start" }}>
-                    <AlertTriangle size={20} color={colors.danger} style={{ marginTop: 2 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: "14px", fontWeight: 700, color: colors.danger }}>
-                        Connection Error - Token expired on 19 May
-                      </div>
-                      <ol style={{ margin: `${spacing[3]} 0 0 18px`, color: colors["text-secondary"], fontSize: typography.bodySm.size }}>
-                        <li style={{ marginBottom: 6 }}>Go to Azure DevOps link</li>
-                        <li style={{ marginBottom: 6 }}>Generate new Personal Access Token</li>
-                        <li style={{ marginBottom: 6 }}>
-                          Paste token input field +{" "}
-                          <strong style={{ color: colors["text-primary"] }}>
-                            Validate and Save
-                          </strong>
-                        </li>
-                      </ol>
-                      <div style={{ marginTop: spacing[4], display: "flex", gap: spacing[2], flexWrap: "wrap" }}>
-                        <input
-                          type="password"
-                          placeholder="Paste new token…"
-                          style={{
-                            flex: 1,
-                            minWidth: 240,
-                            height: 40,
-                            borderRadius: borderRadius.md,
-                            border: `1px solid ${colors["border-default"]}`,
-                            padding: `0 ${spacing[3]}`,
-                            fontSize: typography.bodySm.size,
-                          }}
-                        />
-                        <button
-                          type="button"
-                          style={primaryBtn}
-                          onClick={() => setTokenExpired(false)}
-                        >
-                          Validate and Save
-                        </button>
-                      </div>
+                  + Add Connection
+                </button>
+              </div>
+
+              {showAddAdo && (
+                <div style={{
+                  backgroundColor: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 12,
+                  padding: 24,
+                  marginBottom: 16,
+                }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 16px" }}>
+                    Add New ADO Connection
+                  </h3>
+
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                    gap: 16,
+                    marginBottom: 16,
+                  }}>
+                    <div>
+                      <label style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "#374151",
+                        display: "block",
+                        marginBottom: 6,
+                        textTransform: "uppercase",
+                      }}>
+                        Connection Name *
+                      </label>
+                      <input
+                        value={adoForm.name}
+                        onChange={(e) => setAdoForm({ ...adoForm, name: e.target.value })}
+                        placeholder="e.g. Main Project ADO"
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 8,
+                          fontSize: 14,
+                          boxSizing: "border-box",
+                        }}
+                      />
                     </div>
+
+                    <div>
+                      <label style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "#374151",
+                        display: "block",
+                        marginBottom: 6,
+                        textTransform: "uppercase",
+                      }}>
+                        ADO Organization *
+                      </label>
+                      <input
+                        value={adoForm.adoOrg}
+                        onChange={(e) => setAdoForm({ ...adoForm, adoOrg: e.target.value })}
+                        placeholder="e.g. kamal02211994"
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 8,
+                          fontSize: 14,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <p style={{ fontSize: 11, color: "#94a3b8", margin: "4px 0 0" }}>
+                        From: dev.azure.com/YOUR_ORG
+                      </p>
+                    </div>
+
+                    <div>
+                      <label style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "#374151",
+                        display: "block",
+                        marginBottom: 6,
+                        textTransform: "uppercase",
+                      }}>
+                        ADO Project Name *
+                      </label>
+                      <input
+                        value={adoForm.adoProject}
+                        onChange={(e) => setAdoForm({ ...adoForm, adoProject: e.target.value })}
+                        placeholder="e.g. Delivery pulse"
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 8,
+                          fontSize: 14,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "#374151",
+                        display: "block",
+                        marginBottom: 6,
+                        textTransform: "uppercase",
+                      }}>
+                        Personal Access Token (PAT) *
+                      </label>
+                      <input
+                        type="password"
+                        value={adoForm.patToken}
+                        onChange={(e) => setAdoForm({ ...adoForm, patToken: e.target.value })}
+                        placeholder="Paste your PAT token here"
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 8,
+                          fontSize: 14,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <p style={{ fontSize: 11, color: "#94a3b8", margin: "4px 0 0" }}>
+                        Required scope: Work Items → Read & Write
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{
+                    backgroundColor: "#eff6ff",
+                    borderRadius: 8,
+                    padding: "12px 16px",
+                    marginBottom: 16,
+                    fontSize: 13,
+                    color: "#1d4ed8",
+                  }}>
+                    💡 Connection will be tested automatically when added.
+                    First connection is set as default.
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={handleAddAdoConnection}
+                      disabled={isAddingAdo}
+                      style={{
+                        backgroundColor: isAddingAdo ? "#94a3b8" : "#0078d4",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "10px 20px",
+                        fontSize: 14,
+                        fontWeight: 600,
+                        cursor: isAddingAdo ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {isAddingAdo ? "⏳ Testing & Adding..." : "+ Add & Test Connection"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddAdo(false)}
+                      style={{
+                        backgroundColor: "white",
+                        color: "#64748b",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 8,
+                        padding: "10px 20px",
+                        fontSize: 14,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
                   </div>
                 </div>
               )}
 
-              {/* Simple connected state when tokenExpired becomes false */}
-              {!tokenExpired && (
-                <div
-                  style={{
-                    backgroundColor: "#f0fdf4",
-                    border: "1px solid #bbf7d0",
-                    borderRadius: borderRadius.lg,
-                    padding: spacing[4],
-                    display: "flex",
-                    alignItems: "center",
-                    gap: spacing[3],
-                  }}
-                >
-                  <Check size={18} color={colors["success-dark"]} />
-                  <div style={{ fontSize: "14px", fontWeight: 700, color: colors["text-primary"] }}>
-                    Connected - token refreshed successfully
-                  </div>
+              {adoConnections.length === 0 ? (
+                <div style={{
+                  backgroundColor: "white",
+                  border: "2px dashed #e2e8f0",
+                  borderRadius: 12,
+                  padding: 40,
+                  textAlign: "center",
+                }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>🔗</div>
+                  <p style={{ fontSize: 16, fontWeight: 600, color: "#374151", margin: 0 }}>
+                    No ADO connections yet
+                  </p>
+                  <p style={{ fontSize: 13, color: "#94a3b8", margin: "8px 0 16px" }}>
+                    Add your Azure DevOps organization to start pushing stories
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddAdo(true)}
+                    style={{
+                      backgroundColor: "#0078d4",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "10px 20px",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    + Add First Connection
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {adoConnections.map((conn) => (
+                    <div
+                      key={conn._id}
+                      style={{
+                        backgroundColor: "white",
+                        border: `1px solid ${conn.isDefault ? "#93c5fd" : "#e2e8f0"}`,
+                        borderRadius: 12,
+                        padding: "16px 20px",
+                        borderLeft: `4px solid ${
+                          conn.connectionStatus === "connected" ? "#16a34a"
+                            : conn.connectionStatus === "failed" ? "#dc2626"
+                              : "#f59e0b"
+                        }`,
+                      }}
+                    >
+                      <div style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                        gap: 12,
+                        flexWrap: "wrap",
+                      }}>
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                          <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            marginBottom: 6,
+                            flexWrap: "wrap",
+                          }}>
+                            <h3 style={{
+                              fontSize: 15,
+                              fontWeight: 700,
+                              color: "#0f172a",
+                              margin: 0,
+                            }}>
+                              {conn.name}
+                            </h3>
+
+                            {conn.isDefault && (
+                              <span style={{
+                                backgroundColor: "#eff6ff",
+                                color: "#2563eb",
+                                padding: "2px 8px",
+                                borderRadius: 999,
+                                fontSize: 11,
+                                fontWeight: 600,
+                              }}>
+                                ⭐ Default
+                              </span>
+                            )}
+
+                            <span style={{
+                              backgroundColor: conn.connectionStatus === "connected"
+                                ? "#f0fdf4"
+                                : conn.connectionStatus === "failed"
+                                  ? "#fef2f2"
+                                  : "#fffbeb",
+                              color: conn.connectionStatus === "connected"
+                                ? "#16a34a"
+                                : conn.connectionStatus === "failed"
+                                  ? "#dc2626"
+                                  : "#f59e0b",
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              fontSize: 11,
+                              fontWeight: 600,
+                            }}>
+                              {conn.connectionStatus === "connected" ? "✅ Connected"
+                                : conn.connectionStatus === "failed" ? "❌ Failed"
+                                  : "⏳ Pending"}
+                            </span>
+                          </div>
+
+                          <div style={{
+                            display: "flex",
+                            gap: 16,
+                            fontSize: 13,
+                            color: "#64748b",
+                            flexWrap: "wrap",
+                          }}>
+                            <span>🏢 {conn.adoOrg}</span>
+                            <span>📁 {conn.adoProject}</span>
+                            <span>🔑 {conn.patTokenPreview}</span>
+                            {conn.lastTestedAt && (
+                              <span>
+                                🕐 Tested {new Date(conn.lastTestedAt).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+
+                          {(conn.workItemTypes?.length ?? 0) > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                              <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                                Work item types: {conn.workItemTypes?.join(", ")}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+                          {!conn.isDefault && (
+                            <button
+                              type="button"
+                              onClick={() => handleSetDefault(conn._id)}
+                              style={{
+                                padding: "6px 12px",
+                                backgroundColor: "#eff6ff",
+                                color: "#2563eb",
+                                border: "1px solid #93c5fd",
+                                borderRadius: 6,
+                                fontSize: 12,
+                                cursor: "pointer",
+                                fontWeight: 500,
+                              }}
+                            >
+                              Set Default
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleTestConnection(conn._id)}
+                            disabled={testingId === conn._id}
+                            style={{
+                              padding: "6px 12px",
+                              backgroundColor: "#f0fdf4",
+                              color: "#16a34a",
+                              border: "1px solid #86efac",
+                              borderRadius: 6,
+                              fontSize: 12,
+                              cursor: "pointer",
+                              fontWeight: 500,
+                            }}
+                          >
+                            {testingId === conn._id ? "⏳" : "🔄 Test"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteConnection(conn._id)}
+                            style={{
+                              padding: "6px 12px",
+                              backgroundColor: "white",
+                              color: "#dc2626",
+                              border: "1px solid #fca5a5",
+                              borderRadius: 6,
+                              fontSize: 12,
+                              cursor: "pointer",
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

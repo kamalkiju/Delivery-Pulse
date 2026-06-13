@@ -14,6 +14,57 @@ import { toReviewStoryDto } from "../review/review.controller.js";
 
 const getOrgId = (req) => req.user?.orgId ?? req.user?.organisationId;
 
+const getActiveAdoConnection = async (organisationId) => {
+  try {
+    const AdoConnection = (await import("../../models/AdoConnection.model.js")).default;
+
+    let connection = await AdoConnection.findOne({
+      organisationId,
+      isDefault: true,
+      isActive: true,
+      connectionStatus: "connected",
+    });
+
+    if (!connection) {
+      connection = await AdoConnection.findOne({
+        organisationId,
+        isActive: true,
+        connectionStatus: "connected",
+      });
+    }
+
+    if (!connection) {
+      connection = await AdoConnection.findOne({
+        isActive: true,
+        connectionStatus: "connected",
+      });
+    }
+
+    if (connection) {
+      return {
+        org: connection.adoOrg,
+        project: connection.adoProject,
+        token: connection.patToken,
+        workItemTypes: connection.workItemTypes,
+      };
+    }
+
+    if (process.env.ADO_ORG && process.env.ADO_PROJECT && process.env.ADO_TOKEN) {
+      return {
+        org: process.env.ADO_ORG,
+        project: process.env.ADO_PROJECT,
+        token: process.env.ADO_TOKEN,
+        workItemTypes: [],
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error("[ado-conn] getActiveAdoConnection error:", error.message);
+    return null;
+  }
+};
+
 /** GET /api/stories — list stories with optional status/source/projectId filters */
 export async function getStories(req, res) {
   try {
@@ -78,11 +129,18 @@ export const approveStory = async (req, res) => {
     let adoId = null;
     let adoUrl = null;
 
-    const adoOrg = process.env.ADO_ORG;
-    const adoProject = process.env.ADO_PROJECT;
-    const adoToken = process.env.ADO_TOKEN;
+    const adoConfig = await getActiveAdoConnection(getOrgId(req));
 
-    if (adoOrg && adoProject && adoToken) {
+    console.log(
+      "[approve] ADO config from DB:",
+      adoConfig ? `${adoConfig.org}/${adoConfig.project}` : "NOT FOUND",
+    );
+
+    if (adoConfig) {
+      process.env.ADO_ORG = adoConfig.org;
+      process.env.ADO_PROJECT = adoConfig.project;
+      process.env.ADO_TOKEN = adoConfig.token;
+
       console.log("[approve] ADO configured - attempting push...");
       try {
         const adoModule = await import("../../services/ado/ado.service.js");
@@ -101,18 +159,14 @@ export const approveStory = async (req, res) => {
 
         story.adoId = String(adoId);
         story.status = "pushed-to-ado";
-        adoUrl = `https://dev.azure.com/${adoOrg}/${encodeURIComponent(adoProject)}/_workitems/edit/${adoId}`;
+        adoUrl = `https://dev.azure.com/${adoConfig.org}/${encodeURIComponent(adoConfig.project)}/_workitems/edit/${adoId}`;
         story.adoUrl = adoUrl;
       } catch (adoError) {
         console.error("[approve] ADO push FAILED:", adoError.message);
         console.error("[approve] ADO error stack:", adoError.stack);
       }
     } else {
-      console.log("[approve] ADO NOT configured:",
-        "ORG:", adoOrg ? "SET" : "MISSING",
-        "PROJECT:", adoProject ? "SET" : "MISSING",
-        "TOKEN:", adoToken ? "SET" : "MISSING",
-      );
+      console.log("[approve] ADO NOT configured - no connection in DB or env vars");
     }
 
     await story.save();

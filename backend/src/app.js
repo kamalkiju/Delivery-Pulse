@@ -33,6 +33,7 @@ import reportsRoutes from "./modules/reports/reports.routes.js";
 import settingsRoutes from "./modules/settings/settings.routes.js";
 import projectRoutes from "./modules/project/project.routes.js";
 import adoRoutes from "./modules/ado/ado.routes.js";
+import adoConnectionRoutes from "./modules/ado/ado-connection.routes.js";
 
 // JSON 404 for unregistered paths
 import notFoundMiddleware from "./middlewares/notFound.middleware.js";
@@ -111,6 +112,7 @@ app.use("/api/review", reviewRoutes);
 app.use("/api/stories", storyRoutes);
 // Azure DevOps — sync board, bulk push approved stories, status updates
 app.use("/api/ado", adoRoutes);
+app.use("/api/ado-connections", adoConnectionRoutes);
 app.use("/api/documents", documentsRoutes);
 app.use("/api/meetings", meetingsRoutes);
 app.use("/api/clients", clientsRoutes);
