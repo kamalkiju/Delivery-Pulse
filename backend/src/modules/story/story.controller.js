@@ -251,6 +251,138 @@ export async function updateStory(req, res) {
   }
 }
 
+/** GET /api/stories/ado-users — list assignable users from ADO */
+export const getADOUsers = async (req, res) => {
+  try {
+    const organisationId = getOrgId(req);
+    const AdoConnection = (await import("../../models/AdoConnection.model.js")).default;
+
+    const orgFilter = organisationId ? { organisationId } : {};
+
+    const connection = await AdoConnection.findOne({
+      ...orgFilter,
+      isDefault: true,
+      isActive: true,
+      connectionStatus: "connected",
+    }) || await AdoConnection.findOne({
+      ...orgFilter,
+      isActive: true,
+      connectionStatus: "connected",
+    });
+
+    if (!connection) {
+      console.log("[ado-users] No active ADO connection found");
+      return res.json({ success: true, users: [] });
+    }
+
+    const org = connection.adoOrg;
+    const project = connection.adoProject;
+    const token = connection.patToken;
+    const pat = Buffer.from(`:${token}`).toString("base64");
+
+    console.log("[ado-users] Fetching users from:", org, project);
+
+    const teamUrl = `https://dev.azure.com/${org}/_apis/projects/${encodeURIComponent(project)}/teams?api-version=7.0`;
+
+    const teamResponse = await fetch(teamUrl, {
+      headers: {
+        Authorization: `Basic ${pat}`,
+        Accept: "application/json",
+      },
+    });
+
+    console.log("[ado-users] Team response:", teamResponse.status);
+
+    if (!teamResponse.ok) {
+      const entitlementUrl = `https://vsaex.dev.azure.com/${org}/_apis/userentitlements?api-version=6.0-preview.3`;
+
+      const entResponse = await fetch(entitlementUrl, {
+        headers: {
+          Authorization: `Basic ${pat}`,
+          Accept: "application/json",
+        },
+      });
+
+      console.log("[ado-users] Entitlement response:", entResponse.status);
+
+      if (entResponse.ok) {
+        const entText = await entResponse.text();
+        if (entText.includes("<!DOCTYPE")) {
+          return res.json({ success: true, users: [] });
+        }
+        const entData = JSON.parse(entText);
+        const users = (entData.members || entData.value || [])
+          .map((m) => ({
+            id: m.id || m.user?.subjectDescriptor,
+            displayName: m.user?.displayName || m.user?.principalName,
+            email: m.user?.mailAddress || m.user?.principalName,
+            uniqueName: m.user?.mailAddress || m.user?.principalName,
+          }))
+          .filter((u) => u.email && u.displayName);
+
+        console.log("[ado-users] Found via entitlement:", users.length);
+        return res.json({ success: true, users });
+      }
+
+      return res.json({ success: true, users: [] });
+    }
+
+    const teamText = await teamResponse.text();
+    if (teamText.includes("<!DOCTYPE")) {
+      return res.json({ success: true, users: [] });
+    }
+
+    const teamData = JSON.parse(teamText);
+    console.log("[ado-users] Teams found:", teamData.value?.length);
+
+    const allUsers = [];
+
+    for (const team of teamData.value || []) {
+      const membersUrl = `https://dev.azure.com/${org}/_apis/projects/${encodeURIComponent(project)}/teams/${team.id}/members?api-version=7.0`;
+
+      const membersResponse = await fetch(membersUrl, {
+        headers: {
+          Authorization: `Basic ${pat}`,
+          Accept: "application/json",
+        },
+      });
+
+      if (membersResponse.ok) {
+        const membersText = await membersResponse.text();
+        if (membersText.includes("<!DOCTYPE")) continue;
+
+        const membersData = JSON.parse(membersText);
+
+        for (const member of membersData.value || []) {
+          const email = member.identity?.uniqueName
+            || member.identity?.subjectDescriptor;
+          const name = member.identity?.displayName;
+          const id = member.identity?.id;
+
+          if (email && !allUsers.find((u) => u.email === email)) {
+            allUsers.push({
+              id,
+              displayName: name || email,
+              email,
+              uniqueName: email,
+            });
+          }
+        }
+      }
+    }
+
+    console.log("[ado-users] Total users:", allUsers.length);
+    allUsers.forEach((u) =>
+      console.log("[ado-users]", u.displayName, "-", u.email)
+    );
+
+    res.json({ success: true, users: allUsers });
+  } catch (error) {
+    console.error("[ado-users] Error:", error.message);
+    res.json({ success: true, users: [] });
+  }
+};
+
 /** DELETE /api/stories/delete-documents — temporary testing cleanup */
 export const deleteDocumentStories = async (req, res) => {
   try {

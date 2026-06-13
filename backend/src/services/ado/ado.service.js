@@ -119,6 +119,7 @@ export const createADOWorkItem = async (story, config = null) => {
       path: "/fields/System.AssignedTo",
       value: story.assignee,
     });
+    console.log("[ado] Assigning to:", story.assignee);
   }
 
   const encodedProject = encodeURIComponent(project);

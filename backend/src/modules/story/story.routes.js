@@ -19,6 +19,7 @@ import {
   rejectStory,
   updateStory,
   getStories,
+  getADOUsers,
   deleteDocumentStories,
   deleteStory,
   deleteBySource,
@@ -30,6 +31,9 @@ router.use(authMiddleware);
 
 // GET /api/stories — list with optional ?status=&source=&projectId= filters
 router.get("/", getStories);
+
+// GET /api/stories/ado-users — assignable ADO users for assignee dropdown
+router.get("/ado-users", getADOUsers);
 
 // DELETE /api/stories/delete-documents — temporary testing cleanup
 router.delete("/delete-documents", deleteDocumentStories);

@@ -74,16 +74,21 @@ export async function createDraftStory({
     type: aiResult.type ?? "Story",
     priority: aiResult.priority ?? "Medium",
     status: "pending-review",
-    acceptanceCriteria: Array.isArray(aiResult.acceptanceCriteria)
-      ? aiResult.acceptanceCriteria.map((ac) =>
-          typeof ac === "object" ? (ac.scenario ?? ac.then ?? JSON.stringify(ac)) : ac
-        )
-      : [],
-    acceptanceCriteriaFormatted: aiResult.acceptanceCriteriaFormatted ?? [],
+    acceptanceCriteria: (aiResult.acceptanceCriteria || [])
+      .map((ac) => (typeof ac === "string" ? ac : ac.scenario || ""))
+      .filter(Boolean),
+    acceptanceCriteriaFormatted: (aiResult.acceptanceCriteriaFormatted || [])
+      .map((ac, i) => ({
+        id: ac.id || `AC ${i + 1}`,
+        scenario: typeof ac === "string" ? ac : ac.scenario || "",
+      }))
+      .filter((ac) => ac.scenario),
     releaseNotes: aiResult.releaseNotes ?? "",
     businessRequirement: aiResult.businessRequirement ?? "",
     userFlow: aiResult.userFlow ?? "",
     uiBehavior: aiResult.uiBehavior ?? "",
+    validations: aiResult.validations ?? [],
+    tags: Array.isArray(aiResult.tags) ? aiResult.tags : [],
     source: "slack",
     sourceRef: sourceRef.toString(),
     sourceQuote,
@@ -244,6 +249,7 @@ export async function updateStory(storyId, updates = {}) {
   if (updates.releaseNotes != null) patch.releaseNotes = updates.releaseNotes;
   if (updates.sprint != null) patch.sprint = updates.sprint;
   if (updates.assignee != null) patch.assignee = updates.assignee;
+  if (updates.assigneeName != null) patch.assigneeName = updates.assigneeName;
   if (updates.areaPath != null) patch.areaPath = updates.areaPath;
   if (updates.tags != null) patch.tags = updates.tags;
   if (updates.figmaLink != null) patch.figmaLink = updates.figmaLink;

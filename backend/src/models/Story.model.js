@@ -173,6 +173,10 @@ const storySchema = new mongoose.Schema({
     type: String,
   },
 
+  assigneeName: {
+    type: String,
+  },
+
   // True when Claude/AI created the draft; false for manual entry
   isAIGenerated: {
     type: Boolean,

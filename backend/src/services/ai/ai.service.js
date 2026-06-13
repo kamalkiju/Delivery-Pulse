@@ -13,32 +13,38 @@ const getClaudeClient = () => {
 
 function buildFallbackResult(messageText) {
   const safeText = messageText ?? "";
+  const acceptanceCriteriaFormatted = [
+    {
+      id: "AC 1",
+      scenario:
+        "Given the user is on the affected screen When they perform the reported action Then the system responds as expected",
+    },
+    {
+      id: "AC 2",
+      scenario:
+        "Given invalid or edge-case input When the user submits the form Then appropriate validation messages are shown",
+    },
+    {
+      id: "AC 3",
+      scenario:
+        "Given the fix is deployed When the user repeats the original steps Then the issue no longer occurs",
+    },
+  ];
   return {
     storyTitle: `DeliveryPulse > General > ${safeText.substring(0, 50)}`,
     type: "Story",
     title: `DeliveryPulse > General > ${safeText.substring(0, 50)}`,
     priority: "Medium",
     description: `As a user I need ${safeText} So that the system works correctly`,
-    acceptanceCriteria: [
-      {
-        id: "AC 1",
-        scenario:
-          "Given the user performs the action When the system processes it Then the expected result is shown",
-      },
-    ],
-    acceptanceCriteriaFormatted: [
-      {
-        id: "AC 1",
-        given: "Given the user performs the action",
-        when: "When the system processes it",
-        then: "Then the expected result is shown",
-      },
-    ],
+    acceptanceCriteria: acceptanceCriteriaFormatted.map((ac) => ac.scenario),
+    acceptanceCriteriaFormatted,
     releaseNotes: `We addressed the client requirement: ${safeText}`,
     releaseNotesText: `We addressed the client requirement: ${safeText}`,
-    businessRequirement: "",
+    businessRequirement: safeText,
     userFlow: "",
     uiBehavior: "",
+    validations: [],
+    tags: [],
     isRegression: false,
     suggestedSprint: "Current",
   };
@@ -59,66 +65,70 @@ export async function analyzeMessage({
     return buildFallbackResult(messageText);
   }
 
-  const prompt = `You are a senior Business Analyst working for an IT services company.
-A client has sent a message via Slack that needs to be converted
-into a properly formatted ADO user story.
+  const prompt = `You are a senior Business Analyst.
+A client sent this Slack message. Convert it to a 
+complete ADO user story.
 
-Your job is to analyze the message and create a professional story.
-
-Return ONLY a valid JSON object. No markdown. No explanation. Just JSON.
-
+Return ONLY raw JSON - no markdown - no code blocks:
 {
-  "storyTitle": "Create a meaningful title like: DeliveryPulse > [Module] > [Feature Name]",
+  "storyTitle": "ProjectName > Module > Feature Name",
   "type": "Bug or Story or Feature or Task",
   "priority": "Critical or High or Medium or Low",
-  "description": "As a [specific user type] I need [specific capability] So that [specific business value and outcome]",
-  "businessRequirement": "Plain-language summary of the business need and why it matters",
-  "userFlow": "Step 1: ...\\nStep 2: ...\\nStep 3: ...",
-  "uiBehavior": "Describe what the user sees and how the UI should behave",
+  "description": "As a [specific user role] I need [specific feature] So that [specific business value]",
+  "adoDescription": {
+    "businessRequirement": "What business problem this client message describes",
+    "userFlow": "Step by step how user interacts with this feature",
+    "uiBehavior": "How the UI should look and behave",
+    "validations": [
+      "Validation rule 1",
+      "Validation rule 2"
+    ]
+  },
   "acceptanceCriteria": [
     {
       "id": "AC 1",
-      "scenario": "Given [the initial context or state] When [the action is performed] Then [the expected outcome]"
+      "scenario": "Given [initial context/precondition] When [specific user action] Then [expected system response]"
     },
     {
       "id": "AC 2",
-      "scenario": "Given [the initial context or state] When [the action is performed] Then [the expected outcome]"
+      "scenario": "Given [initial context/precondition] When [specific user action] Then [expected system response]"
     },
     {
       "id": "AC 3",
-      "scenario": "Given [the initial context or state] When [the action is performed] Then [the expected outcome]"
+      "scenario": "Given [initial context/precondition] When [specific user action] Then [expected system response]"
     }
   ],
-  "releaseNotes": "We introduced [feature/fix name] to [solve what problem]. This was developed to meet [requirement]. [Business impact statement].",
-  "sprint": "Current or Next or Backlog"
+  "sprint": "Current or Next or Backlog",
+  "tags": ["relevant-tag-1", "relevant-tag-2"],
+  "releaseNotes": "We introduced [feature] to [solve problem]. This meets [requirement]."
 }
 
-IMPORTANT RULES:
-1. NEVER use the raw client message as the title
-2. ALWAYS create a meaningful professional title
-3. ALWAYS write description as "As a X I need Y So that Z"
-4. ALWAYS fill businessRequirement, userFlow, and uiBehavior as separate fields
-5. ALWAYS generate minimum 3 acceptance criteria
-6. Each AC must follow Given/When/Then format
-7. Infer missing details from context intelligently
+STRICT RULES FOR ACCEPTANCE CRITERIA:
+1. EVERY AC must follow EXACTLY this format:
+   "Given [context] When [action] Then [result]"
+2. NEVER write AC as just a statement
+3. ALWAYS have minimum 3 acceptance criteria
+4. Make AC specific to the client message content
+5. AC must be testable and verifiable
 
 TYPE RULES:
-- Bug: error, not working, broken, 500, crash, failed, wrong
+- Bug: error, not working, broken, 500, crash, failed, wrong, issue
 - Feature: new feature, add, introduce, build, create, need a
-- Story: as a user, need to, should be able to, requirement, update
-- Task: update, change, modify, fix, improve, configure
+- Story: need to, should be able to, requirement, update, improve
+- Task: update, change, modify, fix, configure
 
 PRIORITY RULES:
 - Critical: system down, cannot login, production broken, urgent, ASAP
-- High: major feature broken, blocks multiple users, important
-- Medium: feature update, enhancement, improvement needed
-- Low: minor UI change, nice to have, cosmetic
+- High: major feature broken, blocks users, important
+- Medium: enhancement, update needed, improvement
+- Low: minor change, nice to have
 
-CLIENT NAME: "${clientName}"
-CLIENT MESSAGE: "${messageText || "(no text — see attached image if any)"}"
+Client name: "${clientName}"
+Client Slack message: "${messageText || "(no text — see attached image if any)"}"
 
-Analyze the message carefully and generate a complete professional story.
-Return ONLY the JSON object above with all fields filled in properly.`;
+Analyze the message carefully.
+Generate a complete professional ADO story.
+Return ONLY the JSON object. No other text.`;
 
   const content = [{ type: "text", text: prompt }];
 
@@ -169,30 +179,22 @@ Return ONLY the JSON object above with all fields filled in properly.`;
     const storyTitle =
       result.storyTitle ?? `DeliveryPulse > General > ${messageText.substring(0, 50)}`;
 
-    // Normalise ACs — support both { id, scenario } and { id, given, when, then }
+    const adoDescription = result.adoDescription ?? {};
+
     const rawACs = Array.isArray(result.acceptanceCriteria)
       ? result.acceptanceCriteria
       : [];
 
-    const acceptanceCriteriaFormatted = rawACs.map((ac, i) => {
-      if (typeof ac === "string") {
-        return { id: `AC ${i + 1}`, given: "", when: "", then: ac };
-      }
-      if (ac.scenario) {
-        return { id: ac.id ?? `AC ${i + 1}`, given: "", when: "", then: ac.scenario };
-      }
-      return {
-        id: ac.id ?? `AC ${i + 1}`,
-        given: ac.given ?? "",
-        when: ac.when ?? "",
-        then: ac.then ?? "",
-      };
-    });
+    const acceptanceCriteria = rawACs
+      .map((ac) => (typeof ac === "string" ? ac : ac.scenario || ""))
+      .filter(Boolean);
 
-    // Flat string array for legacy acceptanceCriteria field
-    const acceptanceCriteria = rawACs.map((ac) =>
-      typeof ac === "string" ? ac : ac.scenario ?? `${ac.given ?? ""} ${ac.when ?? ""} ${ac.then ?? ""}`.trim()
-    );
+    const acceptanceCriteriaFormatted = rawACs
+      .map((ac, i) => ({
+        id: (typeof ac === "object" && ac.id) ? ac.id : `AC ${i + 1}`,
+        scenario: typeof ac === "string" ? ac : ac.scenario || "",
+      }))
+      .filter((ac) => ac.scenario);
 
     return {
       storyTitle,
@@ -203,9 +205,12 @@ Return ONLY the JSON object above with all fields filled in properly.`;
       acceptanceCriteria,
       acceptanceCriteriaFormatted,
       releaseNotes: result.releaseNotes ?? "",
-      businessRequirement: result.businessRequirement ?? "",
-      userFlow: result.userFlow ?? "",
-      uiBehavior: result.uiBehavior ?? "",
+      businessRequirement: adoDescription.businessRequirement
+        ?? result.businessRequirement ?? "",
+      userFlow: adoDescription.userFlow ?? result.userFlow ?? "",
+      uiBehavior: adoDescription.uiBehavior ?? result.uiBehavior ?? "",
+      validations: adoDescription.validations ?? result.validations ?? [],
+      tags: Array.isArray(result.tags) ? result.tags : [],
       isRegression: false,
       suggestedSprint: result.sprint ?? "Backlog",
     };

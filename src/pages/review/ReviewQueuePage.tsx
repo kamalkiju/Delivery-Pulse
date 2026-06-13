@@ -28,6 +28,7 @@ interface Story {
   releaseNotes?: string;
   sprint?: string;
   assignee?: string;
+  assigneeName?: string;
   areaPath?: string;
   tags?: string[];
   figmaLink?: string;
@@ -49,6 +50,13 @@ interface Story {
   sequence?: number;
 }
 
+interface AdoUser {
+  id?: string;
+  displayName: string;
+  email: string;
+  uniqueName?: string;
+}
+
 interface EditForm {
   storyTitle: string;
   type: string;
@@ -58,6 +66,7 @@ interface EditForm {
   releaseNotes: string;
   sprint: string;
   assignee: string;
+  assigneeName: string;
   areaPath: string;
   tags: string[];
   figmaLink: string;
@@ -350,6 +359,7 @@ const ReviewQueuePage = () => {
     releaseNotes: "",
     sprint: "Current",
     assignee: "",
+    assigneeName: "",
     areaPath: "",
     tags: [],
     figmaLink: "",
@@ -359,6 +369,7 @@ const ReviewQueuePage = () => {
     validations: [],
   });
   const [deletingId, setDeletingId]           = useState<string | null>(null);
+  const [adoUsers, setAdoUsers]               = useState<AdoUser[]>([]);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
@@ -404,6 +415,22 @@ const ReviewQueuePage = () => {
   };
 
   useEffect(() => {
+    const fetchAdoUsers = async () => {
+      try {
+        const response = await api.get("/stories/ado-users");
+        const users = response.data.users || [];
+        setAdoUsers(users);
+        console.log("[users] ADO users loaded:", users.length);
+        users.forEach((u: AdoUser) =>
+          console.log("[users]", u.displayName, u.email)
+        );
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error("[users] Failed:", msg);
+      }
+    };
+
+    fetchAdoUsers();
     fetchAllStories();
     const iv = setInterval(fetchAllStories, 20_000);
     window.addEventListener("project-changed", fetchAllStories);
@@ -498,6 +525,7 @@ const ReviewQueuePage = () => {
       releaseNotes: story.releaseNotes ?? "",
       sprint: story.sprint ?? "Current",
       assignee: story.assignee ?? "",
+      assigneeName: story.assigneeName ?? "",
       areaPath: story.areaPath ?? "",
       tags: story.tags ?? [],
       figmaLink: story.figmaLink ?? "",
@@ -523,6 +551,7 @@ const ReviewQueuePage = () => {
         releaseNotes: editForm.releaseNotes,
         sprint: editForm.sprint,
         assignee: editForm.assignee,
+        assigneeName: editForm.assigneeName,
         areaPath: editForm.areaPath,
         tags: editForm.tags,
         figmaLink: editForm.figmaLink,
@@ -749,8 +778,44 @@ const ReviewQueuePage = () => {
 
             <div style={{ marginBottom: 16 }}>
               <label style={fieldLabel}>Assignee</label>
-              <input value={editForm.assignee} onChange={(e) => setEditForm({ ...editForm, assignee: e.target.value })}
-                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }} />
+              <select
+                value={editForm.assignee || ""}
+                onChange={(e) => {
+                  const selectedUser = adoUsers.find((u) => u.email === e.target.value);
+                  setEditForm({
+                    ...editForm,
+                    assignee: e.target.value,
+                    assigneeName: selectedUser?.displayName || e.target.value,
+                  });
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  color: "#374151",
+                  backgroundColor: "white",
+                  cursor: "pointer",
+                  boxSizing: "border-box",
+                }}
+              >
+                <option value="">-- Select Assignee --</option>
+                {adoUsers.map((user) => (
+                  <option key={user.id || user.email} value={user.email}>
+                    {user.displayName} ({user.email})
+                  </option>
+                ))}
+              </select>
+              {editForm.assignee && (
+                <p style={{
+                  fontSize: 11,
+                  color: "#16a34a",
+                  margin: "4px 0 0",
+                }}>
+                  ✅ Will be assigned to {editForm.assigneeName || editForm.assignee} in ADO
+                </p>
+              )}
             </div>
 
             <div style={{ marginBottom: 16 }}>
