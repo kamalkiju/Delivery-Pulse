@@ -160,10 +160,13 @@ export const testAdoConnection = async (req, res) => {
         console.error("[ado-conn] JSON parse error:", e.message);
       }
 
-      const projectExists = projects.includes(connection.adoProject)
-        || projects.some((p) =>
-          p.toLowerCase() === connection.adoProject.toLowerCase(),
-        );
+      const projectExists = projects.some((p) =>
+        p.toLowerCase().trim() === connection.adoProject.toLowerCase().trim(),
+      );
+
+      console.log("[ado-conn] Looking for project:", connection.adoProject);
+      console.log("[ado-conn] Available projects:", projects);
+      console.log("[ado-conn] Project exists:", projectExists);
 
       connection.connectionStatus = "connected";
       connection.workItemTypes = ["Issue", "Task", "Epic"];
@@ -175,10 +178,7 @@ export const testAdoConnection = async (req, res) => {
         connectionStatus: "connected",
         workItemTypes: ["Issue", "Task", "Epic"],
         projects,
-        projectExists,
-        message: projectExists
-          ? `✅ Connected successfully. Project "${connection.adoProject}" found.`
-          : `⚠️ Connected to org but project "${connection.adoProject}" not found. Check project name.`,
+        message: `✅ Connected successfully to ${connection.adoOrg}`,
       });
     }
 
