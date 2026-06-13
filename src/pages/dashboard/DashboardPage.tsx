@@ -1,600 +1,581 @@
-// ─────────────────────────────────────────────
-// DashboardPage — main home screen after login
-// Wrapped in AppShell (sidebar + topnav). Figma: Delivery Pulse Dashboard
-// ─────────────────────────────────────────────
-
-import { useCallback, useEffect, useState } from "react";
-import { useWorkspaceChange } from "../../hooks/useWorkspaceChange";
-import {
-  getAIActivity,
-  getClientHealth,
-  getDashboardStats,
-  getSprintHealth,
-  getVerbalCommitments,
-  type SprintHealthItem,
-} from "../../api/dashboard.api";
+import { useState, useEffect } from "react";
+import api from "../../api/axios";
 import AppShell from "../../components/layout/AppShell";
-import StatCard from "../../components/ui/StatCard";
-import StatusBadge, { type BadgeVariant } from "../../components/ui/StatusBadge";
-import {
-  borderRadius,
-  colors,
-  spacing,
-  typography,
-} from "../../styles/tokens";
 
-// ── Types ────────────────────────────────────────────────────
-
-/** Shape of one client row returned from GET /api/dashboard */
-interface Client {
-  id: string;
-  name: string;
-  healthScore: number;
-  status: BadgeVariant;
+interface DashboardStats {
+  totalStories: number;
+  pendingReview: number;
+  approved: number;
+  pushedToADO: number;
+  totalMessages: number;
+  todayStories: number;
+  todayMessages: number;
+  aiGeneratedStories: number;
+  connectedWorkspaces: number;
 }
 
-/** One line in the AI activity feed (right panel) */
 interface ActivityItem {
   id: string;
-  text: string;
-  time: string;
-  dotColor: string;
-}
-
-/** Verbal commitment pulled from meetings / Slack */
-interface VerbalCommitment {
-  id: string;
-  text: string;
+  type: string;
+  title: string;
   client: string;
+  timeAgo: string;
+  adoId?: string;
 }
 
-// ── Helpers ──────────────────────────────────────────────────
-
-/** Maps numeric health score to green / amber / red for the score column */
-function getScoreColor(score: number): string {
-  if (score >= 80) return colors.success; // #10b981
-  if (score >= 60) return colors.warning; // #f59e0b
-  return colors.danger; // #dc2626
+interface ClientItem {
+  _id: string;
+  name: string;
+  company?: string;
+  totalStories: number;
+  totalMessages: number;
+  adoStories: number;
+  healthScore: number;
+  status?: string;
 }
 
-function activityDotColor(type: string, isExternal?: boolean): string {
-  if (type === "story") return colors["brand-blue"];
-  if (type === "screenshot") return colors.warning;
-  if (isExternal) return colors.danger;
-  return colors.success;
+interface SprintHealth {
+  currentSprint: {
+    total: number;
+    done: number;
+    inProgress: number;
+    toDo: number;
+    velocity: number;
+  };
+  nextSprint: {
+    total: number;
+    planned: number;
+  };
 }
 
-function sprintHealthColor(health: string): string {
-  if (health === "critical") return colors.danger;
-  if (health === "at-risk") return colors.warning;
-  return colors.success;
-}
-
-// ── Sub-components ───────────────────────────────────────────
-
-/** Gray pulsing block used while isLoading is true */
-function Skeleton({ height }: { height: string }) {
-  return (
-    <div
-      className="dashboard-skeleton"
-      style={{
-        height,
-        borderRadius: borderRadius.xs,
-        backgroundColor: colors["border-default"],
-      }}
-    />
-  );
-}
-
-// ── Page ─────────────────────────────────────────────────────
-
-const DashboardPage = () => {
-  // clients — list for the health table; empty until fetch completes
-  const [clients, setClients] = useState<Client[]>([]);
+export default function DashboardPage() {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [clients, setClients] = useState<ClientItem[]>([]);
+  const [sprintHealth, setSprintHealth] = useState<SprintHealth | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [commitments, setCommitments] = useState<VerbalCommitment[]>([]);
-  const [sprintHealth, setSprintHealth] = useState<SprintHealthItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState({
-    activeClients: 0,
-    storiesThisWeek: 0,
-    aiStoriesThisWeek: 0,
-    avgHealthScore: 0,
-    slaAtRisk: 0,
-  });
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const loadDashboard = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+  const fetchDashboard = async () => {
     try {
-      const [statsRes, clientsRes, activityRes, sprintRes, commitmentsRes] =
-        await Promise.all([
-          getDashboardStats(),
-          getClientHealth(),
-          getAIActivity(),
-          getSprintHealth(),
-          getVerbalCommitments(),
-        ]);
+      const [statsRes, activityRes, clientsRes, sprintRes] = await Promise.all([
+        api.get("/dashboard/stats"),
+        api.get("/dashboard/activity"),
+        api.get("/dashboard/clients"),
+        api.get("/dashboard/sprint-health"),
+      ]);
 
-      setStats(statsRes);
-      setClients(
-        clientsRes.map((c) => ({
-          id: c.id,
-          name: c.name,
-          healthScore: c.score,
-          status: (c.status as BadgeVariant) || "healthy",
-        })),
-      );
-      setActivities(
-        activityRes.map((a) => ({
-          id: a.id,
-          text: a.description,
-          time: a.time,
-          dotColor: activityDotColor(a.type, a.isExternal),
-        })),
-      );
-      setSprintHealth(sprintRes);
-      setCommitments(commitmentsRes);
-    } catch {
-      setError("Could not load dashboard data. Check that you are logged in.");
-      setClients([]);
-      setActivities([]);
-      setSprintHealth([]);
-      setCommitments([]);
+      setStats(statsRes.data.stats);
+      setActivity(activityRes.data.activity || []);
+      setClients(clientsRes.data.clients || []);
+      setSprintHealth(sprintRes.data.sprintHealth);
+      setLastUpdated(new Date());
+
+      console.log("[dashboard] stats:", statsRes.data.stats);
+      console.log("[dashboard] clients:", clientsRes.data.clients?.length);
+      console.log("[dashboard] activity:", activityRes.data.activity?.length);
+    } catch (error) {
+      console.error("[dashboard] fetch error:", error);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    loadDashboard();
-  }, [loadDashboard]);
+    fetchDashboard();
+    const interval = setInterval(fetchDashboard, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
-  useWorkspaceChange(loadDashboard);
+  if (isLoading) {
+    return (
+      <AppShell pageTitle="Dashboard">
+        <div style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(100vh - 60px)",
+          color: "#64748b",
+          fontSize: 16,
+        }}>
+          Loading dashboard...
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
-    <AppShell pageTitle="Dashboard" showWorkspaceContext>
-      <div
-        style={{
+    <AppShell pageTitle="Dashboard">
+      <div style={{
+        padding: 24,
+        backgroundColor: "#f1f5f9",
+        minHeight: "calc(100vh - 60px)",
+        margin: -24,
+      }}>
+        <div style={{
           display: "flex",
-          flexDirection: "column",
-          gap: spacing[5],
-        }}
-      >
-        {/* ── ROW 1: four KPI StatCards ─────────────────────── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: spacing[4],
-          }}
-        >
-          <StatCard
-            label="Active clients"
-            value={stats.activeClients}
-            trend="2 at risk"
-            trendColor="#dc2626"
-          />
-          <StatCard
-            label="Stories this week"
-            value={stats.storiesThisWeek}
-            trend={`${stats.aiStoriesThisWeek} auto-created by AI`}
-            trendColor="#7c3aed"
-          />
-          <StatCard
-            label="Avg health score"
-            value={stats.avgHealthScore}
-            trend={`${stats.activeClients} active clients`}
-            trendColor="#16a34a"
-          />
-          <StatCard
-            label="SLA at risk"
-            value={stats.slaAtRisk}
-            trend="Action needed today"
-            trendColor="#dc2626"
-            borderLeftColor="#dc2626"
-          />
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 24,
+          flexWrap: "wrap",
+          gap: 12,
+        }}>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#0f172a", margin: 0 }}>
+              Dashboard
+            </h1>
+            <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
+              AI-Powered Delivery Intelligence
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            {lastUpdated && (
+              <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                🕐 Updated {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={fetchDashboard}
+              style={{
+                padding: "8px 16px",
+                backgroundColor: "#1c2655",
+                color: "white",
+                border: "none",
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              ⟳ Refresh
+            </button>
+          </div>
         </div>
 
-        {error != null && (
-          <p
-            style={{
-              margin: 0,
-              color: colors.danger,
-              fontSize: typography.bodySm.size,
-            }}
-          >
-            {error}
-          </p>
-        )}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 16,
+          marginBottom: 24,
+        }}>
+          {[
+            {
+              label: "Total Stories",
+              value: stats?.totalStories || 0,
+              sub: `${stats?.todayStories || 0} created today`,
+              icon: "📋",
+              color: "#0088ff",
+              bg: "#eff6ff",
+            },
+            {
+              label: "Pending Review",
+              value: stats?.pendingReview || 0,
+              sub: "Awaiting BA approval",
+              icon: "⏳",
+              color: "#f59e0b",
+              bg: "#fffbeb",
+            },
+            {
+              label: "Pushed to ADO",
+              value: stats?.pushedToADO || 0,
+              sub: `${stats?.approved || 0} approved total`,
+              icon: "✅",
+              color: "#16a34a",
+              bg: "#f0fdf4",
+            },
+            {
+              label: "Slack Messages",
+              value: stats?.totalMessages || 0,
+              sub: `${stats?.todayMessages || 0} received today`,
+              icon: "💬",
+              color: "#7c3aed",
+              bg: "#faf5ff",
+            },
+          ].map((card, i) => (
+            <div key={i} style={{
+              backgroundColor: "white",
+              borderRadius: 12,
+              padding: "20px 24px",
+              border: "1px solid #e2e8f0",
+              borderTop: `3px solid ${card.color}`,
+            }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+              }}>
+                <div>
+                  <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 8px", fontWeight: 500 }}>
+                    {card.label}
+                  </p>
+                  <p style={{
+                    fontSize: 32,
+                    fontWeight: 700,
+                    color: "#0f172a",
+                    margin: "0 0 4px",
+                    lineHeight: 1,
+                  }}>
+                    {card.value}
+                  </p>
+                  <p style={{ fontSize: 12, color: "#94a3b8", margin: 0 }}>
+                    {card.sub}
+                  </p>
+                </div>
+                <div style={{
+                  backgroundColor: card.bg,
+                  borderRadius: 10,
+                  padding: "10px",
+                  fontSize: 22,
+                }}>
+                  {card.icon}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
 
-        {/* ── ROW 2: Sprint health (from stories collection) ── */}
-        <div
-          style={{
-            backgroundColor: colors["surface-card"],
-            borderRadius: borderRadius.md,
-            border: `1px solid ${colors["border-default"]}`,
-            padding: spacing[5],
-          }}
-        >
-          <h2
-            style={{
-              margin: `0 0 ${spacing[4]} 0`,
-              fontSize: typography.titleSm.size,
-              fontWeight: typography.titleSm.weight,
-              color: colors["text-primary"],
-            }}
-          >
-            Sprint health
-          </h2>
-          {isLoading ? (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: spacing[3],
-              }}
-            >
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} height="88px" />
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: 16,
+          marginBottom: 24,
+        }}>
+          <div style={{
+            backgroundColor: "white",
+            borderRadius: 12,
+            padding: 24,
+            border: "1px solid #e2e8f0",
+          }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 16px" }}>
+              🏃 Sprint Health
+            </h2>
+
+            {sprintHealth ? (
+              <div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    marginBottom: 6,
+                  }}>
+                    <span style={{ fontSize: 13, color: "#374151", fontWeight: 500 }}>
+                      Current Sprint
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#0088ff" }}>
+                      {sprintHealth.currentSprint?.velocity || 0}% complete
+                    </span>
+                  </div>
+                  <div style={{
+                    height: 8,
+                    backgroundColor: "#f1f5f9",
+                    borderRadius: 999,
+                    overflow: "hidden",
+                  }}>
+                    <div style={{
+                      height: 8,
+                      backgroundColor: "#0088ff",
+                      borderRadius: 999,
+                      width: `${sprintHealth.currentSprint?.velocity || 0}%`,
+                      transition: "width 0.5s ease",
+                    }} />
+                  </div>
+                </div>
+
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: 12,
+                }}>
+                  {[
+                    {
+                      label: "To Do",
+                      value: sprintHealth.currentSprint?.toDo || 0,
+                      color: "#64748b",
+                      bg: "#f1f5f9",
+                    },
+                    {
+                      label: "In Progress",
+                      value: sprintHealth.currentSprint?.inProgress || 0,
+                      color: "#2563eb",
+                      bg: "#eff6ff",
+                    },
+                    {
+                      label: "Done",
+                      value: sprintHealth.currentSprint?.done || 0,
+                      color: "#16a34a",
+                      bg: "#f0fdf4",
+                    },
+                  ].map((item, i) => (
+                    <div key={i} style={{
+                      backgroundColor: item.bg,
+                      borderRadius: 8,
+                      padding: "12px",
+                      textAlign: "center",
+                    }}>
+                      <p style={{
+                        fontSize: 24,
+                        fontWeight: 700,
+                        color: item.color,
+                        margin: "0 0 4px",
+                      }}>
+                        {item.value}
+                      </p>
+                      <p style={{
+                        fontSize: 11,
+                        color: item.color,
+                        margin: 0,
+                        fontWeight: 500,
+                      }}>
+                        {item.label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {(sprintHealth.nextSprint?.total ?? 0) > 0 && (
+                  <div style={{
+                    marginTop: 16,
+                    padding: "10px 14px",
+                    backgroundColor: "#faf5ff",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    color: "#7c3aed",
+                  }}>
+                    📅 Next Sprint: {sprintHealth.nextSprint.total} stories planned
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: 32, color: "#94a3b8", fontSize: 13 }}>
+                No sprint data yet
+              </div>
+            )}
+          </div>
+
+          <div style={{
+            backgroundColor: "white",
+            borderRadius: 12,
+            padding: 24,
+            border: "1px solid #e2e8f0",
+          }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 16px" }}>
+              🤖 AI Performance
+            </h2>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                {
+                  label: "AI Generated Stories",
+                  value: stats?.aiGeneratedStories || 0,
+                  total: stats?.totalStories || 0,
+                  color: "#0088ff",
+                },
+                {
+                  label: "Stories Pushed to ADO",
+                  value: stats?.pushedToADO || 0,
+                  total: stats?.totalStories || 0,
+                  color: "#16a34a",
+                },
+                {
+                  label: "Connected Workspaces",
+                  value: stats?.connectedWorkspaces || 0,
+                  total: null as number | null,
+                  color: "#7c3aed",
+                },
+              ].map((item, i) => (
+                <div key={i}>
+                  <div style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    marginBottom: 4,
+                  }}>
+                    <span style={{ fontSize: 13, color: "#374151" }}>
+                      {item.label}
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: item.color }}>
+                      {item.total !== null
+                        ? `${item.value} / ${item.total}`
+                        : item.value}
+                    </span>
+                  </div>
+                  {item.total !== null && item.total > 0 && (
+                    <div style={{
+                      height: 6,
+                      backgroundColor: "#f1f5f9",
+                      borderRadius: 999,
+                      overflow: "hidden",
+                    }}>
+                      <div style={{
+                        height: 6,
+                        backgroundColor: item.color,
+                        borderRadius: 999,
+                        width: `${Math.round((item.value / item.total) * 100)}%`,
+                      }} />
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
-          ) : sprintHealth.length === 0 ? (
-            <p style={{ margin: 0, color: colors["text-secondary"] }}>
-              No sprint data yet — stories will appear here after Slack intake.
-            </p>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-                gap: spacing[3],
-              }}
-            >
-              {sprintHealth.map((sprint) => (
-                <div
-                  key={sprint.name}
-                  style={{
-                    padding: spacing[4],
-                    borderRadius: borderRadius.md,
-                    border: `1px solid ${colors["border-default"]}`,
-                    borderLeft: `4px solid ${sprintHealthColor(sprint.health)}`,
-                    backgroundColor: colors["surface-subtle"],
-                  }}
-                >
-                  <div
-                    style={{
+          </div>
+        </div>
+
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: 16,
+        }}>
+          <div style={{
+            backgroundColor: "white",
+            borderRadius: 12,
+            padding: 24,
+            border: "1px solid #e2e8f0",
+          }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 16px" }}>
+              👥 Client Health
+            </h2>
+
+            {clients.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 32, color: "#94a3b8", fontSize: 13 }}>
+                No clients found
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {clients.map((client) => {
+                  const healthColor = client.healthScore >= 80 ? "#16a34a"
+                    : client.healthScore >= 60 ? "#f59e0b"
+                      : "#dc2626";
+
+                  return (
+                    <div key={client._id} style={{
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      marginBottom: spacing[2],
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontWeight: 700,
-                        fontSize: typography.bodySm.size,
-                        color: colors["text-primary"],
-                      }}
-                    >
-                      {sprint.name}
-                    </span>
-                    <StatusBadge
-                      variant={
-                        sprint.health === "critical"
-                          ? "critical"
-                          : sprint.health === "at-risk"
-                            ? "at-risk"
-                            : "healthy"
-                      }
-                    />
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "22px",
-                      fontWeight: 800,
-                      color: sprintHealthColor(sprint.health),
-                      marginBottom: spacing[1],
-                    }}
-                  >
-                    {sprint.progressPercent}%
-                  </div>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: typography.captionSm.size,
-                      color: colors["text-secondary"],
-                    }}
-                  >
-                    {sprint.done}/{sprint.total} done · {sprint.inReview} in
-                    review · {sprint.atRisk} at risk
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ── ROW 3: client table + AI activity panel ───────── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 380px",
-            gap: spacing[4],
-          }}
-        >
-          {/* Left: Client health overview table */}
-          <div
-            style={{
-              backgroundColor: colors["surface-card"],
-              borderRadius: borderRadius.md,
-              border: `1px solid ${colors["border-default"]}`,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                padding: spacing[5],
-                borderBottom: `1px solid ${colors["border-default"]}`,
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: typography.titleSm.size,
-                  fontWeight: typography.titleSm.weight,
-                  color: colors["text-primary"],
-                }}
-              >
-                Client health overview
-              </h2>
-            </div>
-
-            {/* Table header row */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 100px 100px",
-                padding: "10px 20px",
-                backgroundColor: colors["surface-subtle"],
-                borderBottom: `1px solid ${colors["border-default"]}`,
-              }}
-            >
-              {["CLIENT", "SCORE", "STATUS"].map((col) => (
-                <span
-                  key={col}
-                  style={{
-                    fontSize: typography.tableHeader.size,
-                    fontWeight: typography.tableHeader.weight,
-                    color: colors["text-secondary"],
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {col}
-                </span>
-              ))}
-            </div>
-
-            {/* Table body — skeletons or client rows */}
-            {isLoading
-              ? Array.from({ length: 5 }).map((_, i) => (
-                  <div
-                    key={i}
-                    style={{ padding: "14px 20px" }}
-                  >
-                    <Skeleton height="20px" />
-                  </div>
-                ))
-              : clients.length === 0 ? (
-                <div style={{ padding: spacing[5], color: colors["text-secondary"] }}>
-                  No clients found for your organisation.
-                </div>
-              ) : (
-              clients.map((client) => {
-                  const isCritical = client.status === "critical";
-                  return (
-                    <div
-                      key={client.id}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 100px 100px",
-                        alignItems: "center",
-                        padding: "14px 20px",
-                        borderBottom: `1px solid ${colors["border-default"]}`,
-                        backgroundColor: isCritical
-                          ? "rgba(220, 38, 38, 0.04)"
-                          : colors["surface-card"],
-                        borderLeft: isCritical
-                          ? `3px solid ${colors.danger}`
-                          : "none",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: typography.bodySm.size,
-                          fontWeight: 500,
-                          color: colors["text-primary"],
-                        }}
-                      >
-                        {client.name}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "18px",
-                          fontWeight: 800,
-                          color: getScoreColor(client.healthScore),
-                        }}
-                      >
-                        {client.healthScore}
-                      </span>
-                      <StatusBadge variant={client.status} />
+                      padding: "12px 16px",
+                      backgroundColor: "#f8fafc",
+                      borderRadius: 8,
+                      border: "1px solid #e2e8f0",
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <p style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: "#0f172a",
+                          margin: "0 0 2px",
+                        }}>
+                          {client.name}
+                        </p>
+                        <p style={{ fontSize: 12, color: "#64748b", margin: 0 }}>
+                          {client.totalStories} stories •
+                          {" "}{client.totalMessages} messages •
+                          {" "}{client.adoStories} in ADO
+                        </p>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ textAlign: "right" }}>
+                          <p style={{
+                            fontSize: 22,
+                            fontWeight: 700,
+                            color: healthColor,
+                            margin: 0,
+                            lineHeight: 1,
+                          }}>
+                            {client.healthScore}
+                          </p>
+                          <p style={{
+                            fontSize: 10,
+                            color: healthColor,
+                            margin: 0,
+                            fontWeight: 500,
+                          }}>
+                            {client.status?.toUpperCase()}
+                          </p>
+                        </div>
+                        <div style={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: "50%",
+                          backgroundColor: healthColor,
+                        }} />
+                      </div>
                     </div>
                   );
-                })
-              )}
+                })}
+              </div>
+            )}
           </div>
 
-          {/* Right: AI activity panel (380px column) */}
-          <div
-            style={{
-              backgroundColor: colors["surface-card"],
-              borderRadius: borderRadius.md,
-              border: `1px solid ${colors["border-default"]}`,
-              padding: spacing[5],
-              display: "flex",
-              flexDirection: "column",
-              gap: spacing[4],
-            }}
-          >
-            <h2
-              style={{
-                margin: 0,
-                fontSize: typography.titleSm.size,
-                fontWeight: typography.titleSm.weight,
-                color: colors["text-primary"],
-              }}
-            >
-              AI activity
+          <div style={{
+            backgroundColor: "white",
+            borderRadius: 12,
+            padding: 24,
+            border: "1px solid #e2e8f0",
+          }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 16px" }}>
+              ⚡ Recent Activity
             </h2>
 
-            {isLoading ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: spacing[3] }}>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Skeleton key={i} height="48px" />
-                ))}
+            {activity.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 32, color: "#94a3b8", fontSize: 13 }}>
+                No recent activity
               </div>
-            ) : activities.length === 0 ? (
-              <p style={{ margin: 0, color: colors["text-secondary"] }}>
-                No Slack activity yet — messages appear here when clients post.
-              </p>
             ) : (
-              <ul
-                style={{
-                  listStyle: "none",
-                  margin: 0,
-                  padding: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: spacing[3],
-                }}
-              >
-                {activities.map((item) => (
-                  <li
-                    key={item.id}
-                    style={{
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {activity.map((item) => (
+                  <div key={item.id} style={{
+                    display: "flex",
+                    gap: 12,
+                    padding: "10px 12px",
+                    backgroundColor: "#f8fafc",
+                    borderRadius: 8,
+                    border: "1px solid #e2e8f0",
+                  }}>
+                    <div style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: "50%",
+                      backgroundColor: item.type === "story_created" ? "#eff6ff" : "#faf5ff",
                       display: "flex",
-                      gap: spacing[3],
-                      alignItems: "flex-start",
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: "8px",
-                        height: "8px",
-                        borderRadius: borderRadius.full,
-                        backgroundColor: item.dotColor,
-                        marginTop: "6px",
-                        flexShrink: 0,
-                      }}
-                      aria-hidden
-                    />
-                    <div>
-                      <p
-                        style={{
-                          margin: 0,
-                          fontSize: typography.bodySm.size,
-                          color: colors["text-primary"],
-                        }}
-                      >
-                        {item.text}
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 14,
+                      flexShrink: 0,
+                    }}>
+                      {item.type === "story_created" ? "📋" : "💬"}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{
+                        fontSize: 13,
+                        fontWeight: 500,
+                        color: "#0f172a",
+                        margin: "0 0 2px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}>
+                        {item.title}
                       </p>
-                      <p
-                        style={{
-                          margin: `${spacing[1]} 0 0`,
-                          fontSize: typography.captionSm.size,
-                          color: colors["text-secondary"],
-                        }}
-                      >
-                        {item.time}
+                      <p style={{ fontSize: 11, color: "#64748b", margin: 0 }}>
+                        {item.client} • {item.timeAgo}
                       </p>
                     </div>
-                  </li>
+                    {item.adoId && (
+                      <span style={{
+                        fontSize: 11,
+                        color: "#2563eb",
+                        fontWeight: 600,
+                        flexShrink: 0,
+                      }}>
+                        ADO #{item.adoId}
+                      </span>
+                    )}
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
-
-            {/* Verbal commitments subsection */}
-            <div>
-              <h3
-                style={{
-                  margin: `0 0 ${spacing[3]} 0`,
-                  fontSize: typography.labelMd.size,
-                  fontWeight: 600,
-                  color: colors["text-primary"],
-                }}
-              >
-                Verbal commitments
-              </h3>
-              {isLoading ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: spacing[2] }}>
-                  {Array.from({ length: 3 }).map((_, i) => (
-                    <Skeleton key={i} height="40px" />
-                  ))}
-                </div>
-              ) : commitments.length === 0 ? (
-                <p style={{ margin: 0, color: colors["text-secondary"] }}>
-                  No verbal commitments logged yet.
-                </p>
-              ) : (
-                <ul
-                  style={{
-                    listStyle: "none",
-                    margin: 0,
-                    padding: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: spacing[2],
-                  }}
-                >
-                  {commitments.map((item) => (
-                    <li
-                      key={item.id}
-                      style={{
-                        padding: spacing[3],
-                        backgroundColor: colors["surface-subtle"],
-                        borderRadius: borderRadius.md,
-                        border: `1px solid ${colors["border-default"]}`,
-                      }}
-                    >
-                      <p
-                        style={{
-                          margin: 0,
-                          fontSize: typography.bodySm.size,
-                          color: colors["text-primary"],
-                        }}
-                      >
-                        {item.text}
-                      </p>
-                      <p
-                        style={{
-                          margin: `${spacing[1]} 0 0`,
-                          fontSize: typography.captionSm.size,
-                          color: colors["text-secondary"],
-                        }}
-                      >
-                        {item.client}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
           </div>
         </div>
       </div>
     </AppShell>
   );
-};
-
-export default DashboardPage;
+}

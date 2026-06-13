@@ -1,22 +1,17 @@
 import express from "express";
-
-import { requireAuth } from "../../middlewares/auth.middleware.js";
+import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import {
-  getStats,
-  getClients,
-  getActivity,
+  getDashboardStats,
+  getDashboardActivity,
+  getDashboardClients,
   getSprintHealth,
-  getCommitments,
 } from "./dashboard.controller.js";
 
 const router = express.Router();
 
-router.use(requireAuth);
-
-router.get("/stats", getStats);
-router.get("/clients", getClients);
-router.get("/activity", getActivity);
-router.get("/sprint-health", getSprintHealth);
-router.get("/commitments", getCommitments);
+router.get("/stats", authMiddleware, getDashboardStats);
+router.get("/activity", authMiddleware, getDashboardActivity);
+router.get("/clients", authMiddleware, getDashboardClients);
+router.get("/sprint-health", authMiddleware, getSprintHealth);
 
 export default router;
