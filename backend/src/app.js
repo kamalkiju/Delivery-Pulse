@@ -32,6 +32,7 @@ import clientsRoutes from "./modules/clients/clients.routes.js";
 import reportsRoutes from "./modules/reports/reports.routes.js";
 import settingsRoutes from "./modules/settings/settings.routes.js";
 import projectRoutes from "./modules/project/project.routes.js";
+import adoRoutes from "./modules/ado/ado.routes.js";
 
 // JSON 404 for unregistered paths
 import notFoundMiddleware from "./middlewares/notFound.middleware.js";
@@ -108,6 +109,7 @@ app.use("/api/slack", slackRoutes);
 app.use("/api/review", reviewRoutes);
 // Review Queue — approve / reject / edit individual stories
 app.use("/api/stories", storyRoutes);
+app.use("/api/ado", adoRoutes);
 app.use("/api/documents", documentsRoutes);
 app.use("/api/meetings", meetingsRoutes);
 app.use("/api/clients", clientsRoutes);

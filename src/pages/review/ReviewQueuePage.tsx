@@ -61,6 +61,7 @@ interface EditForm {
   areaPath: string;
   tags: string[];
   figmaLink: string;
+  businessRequirement: string;
   userFlow: string;
   uiBehavior: string;
   validations: string[];
@@ -352,6 +353,7 @@ const ReviewQueuePage = () => {
     areaPath: "",
     tags: [],
     figmaLink: "",
+    businessRequirement: "",
     userFlow: "",
     uiBehavior: "",
     validations: [],
@@ -499,6 +501,7 @@ const ReviewQueuePage = () => {
       areaPath: story.areaPath ?? "",
       tags: story.tags ?? [],
       figmaLink: story.figmaLink ?? "",
+      businessRequirement: story.businessRequirement ?? "",
       userFlow: story.userFlow ?? "",
       uiBehavior: story.uiBehavior ?? "",
       validations: story.validations ?? [],
@@ -523,6 +526,7 @@ const ReviewQueuePage = () => {
         areaPath: editForm.areaPath,
         tags: editForm.tags,
         figmaLink: editForm.figmaLink,
+        businessRequirement: editForm.businessRequirement,
         userFlow: editForm.userFlow,
         uiBehavior: editForm.uiBehavior,
         validations: editForm.validations,
@@ -778,6 +782,13 @@ const ReviewQueuePage = () => {
               <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
                 placeholder="As a [user] I need [what] So that [value]"
                 style={{ width: "100%", height: 100, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Business Requirement</label>
+              <textarea value={editForm.businessRequirement} onChange={(e) => setEditForm({ ...editForm, businessRequirement: e.target.value })}
+                placeholder="Users need secure access to..."
+                style={{ width: "100%", height: 80, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} />
             </div>
 
             <div style={{ marginBottom: 16 }}>

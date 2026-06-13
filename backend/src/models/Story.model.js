@@ -59,6 +59,8 @@ const storySchema = new mongoose.Schema({
       "approved",
       "rejected",
       "pushed-to-ado",
+      "in-progress",
+      "resolved",
       "done",
     ],
     default: "pending-review",
@@ -109,6 +111,16 @@ const storySchema = new mongoose.Schema({
 
   adoUrl: {
     type: String,
+    default: null,
+  },
+
+  adoStatus: {
+    type: String,
+    default: null,
+  },
+
+  lastSyncedAt: {
+    type: Date,
     default: null,
   },
 

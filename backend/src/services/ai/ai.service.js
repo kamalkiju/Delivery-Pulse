@@ -36,6 +36,9 @@ function buildFallbackResult(messageText) {
     ],
     releaseNotes: `We addressed the client requirement: ${safeText}`,
     releaseNotesText: `We addressed the client requirement: ${safeText}`,
+    businessRequirement: "",
+    userFlow: "",
+    uiBehavior: "",
     isRegression: false,
     suggestedSprint: "Current",
   };
@@ -69,6 +72,9 @@ Return ONLY a valid JSON object. No markdown. No explanation. Just JSON.
   "type": "Bug or Story or Feature or Task",
   "priority": "Critical or High or Medium or Low",
   "description": "As a [specific user type] I need [specific capability] So that [specific business value and outcome]",
+  "businessRequirement": "Plain-language summary of the business need and why it matters",
+  "userFlow": "Step 1: ...\\nStep 2: ...\\nStep 3: ...",
+  "uiBehavior": "Describe what the user sees and how the UI should behave",
   "acceptanceCriteria": [
     {
       "id": "AC 1",
@@ -91,9 +97,10 @@ IMPORTANT RULES:
 1. NEVER use the raw client message as the title
 2. ALWAYS create a meaningful professional title
 3. ALWAYS write description as "As a X I need Y So that Z"
-4. ALWAYS generate minimum 3 acceptance criteria
-5. Each AC must follow Given/When/Then format
-6. Infer missing details from context intelligently
+4. ALWAYS fill businessRequirement, userFlow, and uiBehavior as separate fields
+5. ALWAYS generate minimum 3 acceptance criteria
+6. Each AC must follow Given/When/Then format
+7. Infer missing details from context intelligently
 
 TYPE RULES:
 - Bug: error, not working, broken, 500, crash, failed, wrong
@@ -145,7 +152,7 @@ Return ONLY the JSON object above with all fields filled in properly.`;
     console.log("[ai] using model: claude-haiku-4-5");
     const response = await claude.messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 1000,
+      max_tokens: 1500,
       messages: [{ role: "user", content }],
     });
 
@@ -196,6 +203,9 @@ Return ONLY the JSON object above with all fields filled in properly.`;
       acceptanceCriteria,
       acceptanceCriteriaFormatted,
       releaseNotes: result.releaseNotes ?? "",
+      businessRequirement: result.businessRequirement ?? "",
+      userFlow: result.userFlow ?? "",
+      uiBehavior: result.uiBehavior ?? "",
       isRegression: false,
       suggestedSprint: result.sprint ?? "Backlog",
     };

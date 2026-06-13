@@ -18,13 +18,19 @@ export const createADOWorkItem = async (story) => {
   const pat = Buffer.from(`:${token}`).toString("base64");
   const workItemType = story.type === "Bug" ? "Bug" : "Issue";
 
-  let descriptionHtml = `<div><em>${story.description || ""}</em></div>`;
+  const nl = (text) => (text || "").replace(/\n/g, "<br/>");
+
+  let descriptionHtml = "";
+
+  if (story.description) {
+    descriptionHtml += `<div><strong>Description:</strong><br/><em>${story.description}</em></div>`;
+  }
 
   if (story.businessRequirement) {
     descriptionHtml += `<br/><div><strong>Business Requirement:</strong><br/>${story.businessRequirement}</div>`;
   }
   if (story.userFlow) {
-    descriptionHtml += `<br/><div><strong>User Flow:</strong><br/>${story.userFlow}</div>`;
+    descriptionHtml += `<br/><div><strong>User Flow:</strong><br/>${nl(story.userFlow)}</div>`;
   }
   if (story.uiBehavior) {
     descriptionHtml += `<br/><div><strong>UI Behavior:</strong><br/>${story.uiBehavior}</div>`;

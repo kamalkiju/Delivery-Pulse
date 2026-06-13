@@ -14,7 +14,7 @@ import SlackMessagesPage from "../pages/slack/SlackMessagesPage";
 import ReviewQueuePage from "../pages/review/ReviewQueuePage";
 import DocumentsPage from "../pages/documents/DocumentsPage";
 import MeetingsPage from "../pages/meetings/MeetingsPage";
-import AdoStoriesPage from "../pages/ado/AdoStoriesPage";
+import AdoBoardPage from "../pages/ado/AdoBoardPage";
 import ClientsPage from "../pages/clients/ClientsPage";
 import ClientDetailPage from "../pages/clients/ClientDetailPage";
 import ReportsPage from "../pages/reports/ReportsPage";
@@ -105,13 +105,15 @@ export default function AppRoutes() {
       />
 
       <Route
-        path="/ado"
+        path="/ado-board"
         element={
           <ProtectedApp>
-            <AdoStoriesPage />
+            <AdoBoardPage />
           </ProtectedApp>
         }
       />
+
+      <Route path="/ado" element={<Navigate to="/ado-board" replace />} />
 
       {/* /clients — list all clients */}
       <Route

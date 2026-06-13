@@ -44,7 +44,7 @@ const navItems: NavItem[] = [
     badgeCount: 3,
     badgeColor: "blue",
   },
-  { icon: Layers, label: "ADO Board", path: "/ado" },
+  { icon: Layers, label: "ADO Board", path: "/ado-board" },
   {
     icon: ClipboardList,
     label: "Review Queue",
