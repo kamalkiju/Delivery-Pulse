@@ -28,7 +28,7 @@ import {
 type BadgeColor = "blue" | "amber";
 
 interface NavItem {
-  icon: LucideIcon;
+  icon: LucideIcon | string;
   label: string;
   path: string;
   badgeCount?: number;
@@ -53,6 +53,7 @@ const navItems: NavItem[] = [
     badgeColor: "amber",
   },
   { icon: FileText, label: "Documents", path: "/documents" },
+  { path: "/document-workshop", icon: "📄", label: "Doc Workshop" },
   { icon: Calendar, label: "Meetings", path: "/meetings" },
   { icon: Users, label: "Clients", path: "/clients" },
   { icon: BarChart3, label: "Reports", path: "/reports" },
@@ -160,7 +161,7 @@ const Sidebar = () => {
       >
         {navItems.map((item) => {
           const isActive = isSidebarNavActive(item.path, location.pathname);
-          const Icon = item.icon;
+          const Icon = typeof item.icon === "string" ? null : item.icon;
 
           return (
             <button
@@ -171,12 +172,21 @@ const Sidebar = () => {
               onClick={() => navigate(item.path)}
               aria-current={isActive ? "page" : undefined}
             >
-              <Icon
-                size={20}
-                strokeWidth={1.75}
-                color={colors["text-on-dark"]}
-                aria-hidden
-              />
+              {typeof item.icon === "string" ? (
+                <span
+                  style={{ fontSize: 20, lineHeight: 1, width: 20, textAlign: "center" }}
+                  aria-hidden
+                >
+                  {item.icon}
+                </span>
+              ) : Icon ? (
+                <Icon
+                  size={20}
+                  strokeWidth={1.75}
+                  color={colors["text-on-dark"]}
+                  aria-hidden
+                />
+              ) : null}
 
               <span
                 style={{

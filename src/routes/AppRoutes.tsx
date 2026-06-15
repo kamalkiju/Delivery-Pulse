@@ -13,6 +13,7 @@ import { OnboardingOnly, RequireOnboardingComplete } from "./OnboardingGate";
 import SlackMessagesPage from "../pages/slack/SlackMessagesPage";
 import ReviewQueuePage from "../pages/review/ReviewQueuePage";
 import DocumentsPage from "../pages/documents/DocumentsPage";
+import DocumentWorkshopPage from "../pages/DocumentWorkshopPage";
 import MeetingsPage from "../pages/meetings/MeetingsPage";
 import AdoBoardPage from "../pages/ado/AdoBoardPage";
 import ClientsPage from "../pages/clients/ClientsPage";
@@ -91,6 +92,15 @@ export default function AppRoutes() {
         element={
           <ProtectedApp>
             <DocumentsPage />
+          </ProtectedApp>
+        }
+      />
+
+      <Route
+        path="/document-workshop"
+        element={
+          <ProtectedApp>
+            <DocumentWorkshopPage />
           </ProtectedApp>
         }
       />
