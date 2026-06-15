@@ -165,9 +165,16 @@ Context: ${context}`
 
 export const getDocuments = async (req, res) => {
   try {
-    const docs = await DocumentWorkshop.find({
-      organisationId: req.user.organisationId
-    }).sort({ updatedAt: -1 })
+    const organisationId = req.user.organisationId ||
+                           req.user.orgId ||
+                           req.user.organization ||
+                           req.user.org
+
+    const filter = organisationId ? { organisationId } : {}
+
+    const docs = await DocumentWorkshop.find(filter)
+      .sort({ updatedAt: -1 })
+
     res.json({ success: true, documents: docs })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
@@ -181,11 +188,25 @@ export const createDocument = async (req, res) => {
       meetingDate, initialContext, projectId
     } = req.body
 
+    console.log('[doc-workshop] req.user:', JSON.stringify(req.user))
+
+    const organisationId = req.user.organisationId ||
+                           req.user.orgId ||
+                           req.user.organization ||
+                           req.user.org
+
+    if (!organisationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Organisation ID not found in user token'
+      })
+    }
+
     const doc = await DocumentWorkshop.create({
-      organisationId: req.user.organisationId,
+      organisationId,
       projectId: projectId || null,
       title,
-      documentType: documentType || 'understanding-document',
+      documentType: documentType || 'meeting-notes',
       clientName: clientName || '',
       meetingDate: meetingDate || new Date(),
       initialContext,
@@ -193,7 +214,7 @@ export const createDocument = async (req, res) => {
       versions: [],
       currentVersion: 0,
       status: 'draft',
-      createdBy: req.user.userId
+      createdBy: req.user.userId || req.user._id || req.user.id
     })
 
     console.log('[doc-workshop] Created:', doc.title, doc.documentType)
