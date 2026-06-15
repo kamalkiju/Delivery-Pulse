@@ -27,6 +27,7 @@ import slackRoutes from "./modules/slack/slack.routes.js";
 import reviewRoutes from "./modules/review/review.routes.js";
 import storyRoutes from "./modules/story/story.routes.js";
 import documentsRoutes from "./modules/documents/documents.routes.js";
+import documentWorkshopRoutes from './modules/document-workshop/document-workshop.routes.js'
 import meetingsRoutes from "./modules/meetings/meetings.routes.js";
 import clientsRoutes from "./modules/clients/clients.routes.js";
 import reportsRoutes from "./modules/reports/reports.routes.js";
@@ -114,6 +115,7 @@ app.use("/api/stories", storyRoutes);
 app.use("/api/ado", adoRoutes);
 app.use("/api/ado-connections", adoConnectionRoutes);
 app.use("/api/documents", documentsRoutes);
+app.use('/api/document-workshop', documentWorkshopRoutes)
 app.use("/api/meetings", meetingsRoutes);
 app.use("/api/clients", clientsRoutes);
 app.use("/api/reports", reportsRoutes);
