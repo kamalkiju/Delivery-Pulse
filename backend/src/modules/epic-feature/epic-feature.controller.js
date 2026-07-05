@@ -2,13 +2,20 @@ import Epic from '../../models/Epic.model.js'
 import Feature from '../../models/Feature.model.js'
 import Story from '../../models/Story.model.js'
 
+const getOrgId = (req) =>
+  req.user?.organisationId ??
+  req.user?.orgId ??
+  req.user?.organization ??
+  req.user?.org
+
 // ==================== EPIC CONTROLLERS ====================
 
 export const getEpics = async (req, res) => {
   try {
-    const epics = await Epic.find({
-      organisationId: req.user.organisationId
-    }).sort({ createdAt: -1 })
+    const organisationId = getOrgId(req)
+    const filter = organisationId ? { organisationId } : {}
+
+    const epics = await Epic.find(filter).sort({ createdAt: -1 })
 
     const epicsWithCounts = await Promise.all(
       epics.map(async (epic) => {
@@ -43,14 +50,22 @@ export const createEpic = async (req, res) => {
       })
     }
 
+    const organisationId = getOrgId(req)
+    if (!organisationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Organisation ID not found in user token'
+      })
+    }
+
     const epic = await Epic.create({
-      organisationId: req.user.organisationId,
+      organisationId,
       projectId: projectId || null,
       name: name.trim(),
       description: description || '',
       priority: priority || 'Medium',
       status: 'draft',
-      createdBy: req.user.userId
+      createdBy: req.user.userId || req.user._id || req.user.id
     })
 
     console.log('[epic] Created:', epic.name)
@@ -213,8 +228,9 @@ export const getFeatures = async (req, res) => {
   try {
     const { epicId } = req.query
 
+    const organisationId = getOrgId(req)
     const filter = {
-      organisationId: req.user.organisationId,
+      ...(organisationId && { organisationId }),
       ...(epicId && { epicId })
     }
 
@@ -266,8 +282,16 @@ export const createFeature = async (req, res) => {
       })
     }
 
+    const organisationId = getOrgId(req)
+    if (!organisationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Organisation ID not found in user token'
+      })
+    }
+
     const feature = await Feature.create({
-      organisationId: req.user.organisationId,
+      organisationId,
       projectId: projectId || null,
       epicId,
       name: name.trim(),
@@ -275,7 +299,7 @@ export const createFeature = async (req, res) => {
       priority: priority || 'Medium',
       sprint: sprint || 'Backlog',
       status: 'draft',
-      createdBy: req.user.userId
+      createdBy: req.user.userId || req.user._id || req.user.id
     })
 
     console.log('[feature] Created:', feature.name, 'under epic:', epic.name)
@@ -458,9 +482,10 @@ export const pushFeatureToADO = async (req, res) => {
 
 export const getHierarchy = async (req, res) => {
   try {
-    const orgId = req.user.organisationId
+    const orgId = getOrgId(req)
+    const filter = orgId ? { organisationId: orgId } : {}
 
-    const epics = await Epic.find({ organisationId: orgId })
+    const epics = await Epic.find(filter)
       .sort({ createdAt: 1 })
 
     const result = await Promise.all(
