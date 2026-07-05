@@ -257,6 +257,10 @@ export async function updateStory(storyId, updates = {}) {
   if (updates.uiBehavior != null) patch.uiBehavior = updates.uiBehavior;
   if (updates.businessRequirement != null) patch.businessRequirement = updates.businessRequirement;
   if (updates.validations != null) patch.validations = updates.validations;
+  if (updates.epicId !== undefined) patch.epicId = updates.epicId || null;
+  if (updates.epicName !== undefined) patch.epicName = updates.epicName;
+  if (updates.featureId !== undefined) patch.featureId = updates.featureId || null;
+  if (updates.featureName !== undefined) patch.featureName = updates.featureName;
 
   const story = await Story.findByIdAndUpdate(storyId, patch, {
     new: true,

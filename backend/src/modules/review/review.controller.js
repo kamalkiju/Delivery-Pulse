@@ -96,6 +96,10 @@ export function toReviewStoryDto(doc) {
       : undefined,
     isAIGenerated: doc.isAIGenerated ?? true,
     sequence: doc.sequence ?? null,
+    epicId: doc.epicId?.toString() ?? null,
+    epicName: doc.epicName ?? "",
+    featureId: doc.featureId?.toString() ?? null,
+    featureName: doc.featureName ?? "",
   };
 }
 

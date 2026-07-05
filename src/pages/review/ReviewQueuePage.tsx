@@ -48,6 +48,21 @@ interface Story {
   isAIGenerated?: boolean;
   regressionWarning?: string;
   sequence?: number;
+  epicId?: string | null;
+  epicName?: string;
+  featureId?: string | null;
+  featureName?: string;
+}
+
+interface EpicItem {
+  _id: string;
+  name: string;
+}
+
+interface FeatureItem {
+  _id: string;
+  name: string;
+  epicId?: string | { _id: string; name: string };
 }
 
 interface AdoUser {
@@ -74,11 +89,26 @@ interface EditForm {
   userFlow: string;
   uiBehavior: string;
   validations: string[];
+  epicId: string;
+  epicName: string;
+  featureId: string;
+  featureName: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const sid = (s: Story): string => s._id ?? s.id ?? "";
+
+const idStr = (id: unknown): string => {
+  if (!id) return "";
+  if (typeof id === "object" && id !== null && "_id" in id) {
+    return String((id as { _id: unknown })._id);
+  }
+  return String(id);
+};
+
+const featureEpicId = (feature: FeatureItem): string =>
+  idStr(typeof feature.epicId === "object" ? feature.epicId?._id : feature.epicId);
 
 const acText = (ac: string | AcItem): string => {
   if (typeof ac === "string") return ac;
@@ -198,6 +228,40 @@ function StoryCard({ story, tabSource, deletingId, onEdit, onReject, onApprove, 
         <h3 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 4px", lineHeight: 1.4 }}>
           {story.storyTitle || story.title}
         </h3>
+
+        {(story.epicName || story.featureName) && (
+          <div style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            marginBottom: 8,
+          }}>
+            {story.epicName && (
+              <span style={{
+                backgroundColor: "#faf5ff",
+                color: "#7c3aed",
+                padding: "2px 8px",
+                borderRadius: 4,
+                fontSize: 11,
+                fontWeight: 500,
+              }}>
+                📁 {story.epicName}
+              </span>
+            )}
+            {story.featureName && (
+              <span style={{
+                backgroundColor: "#eff6ff",
+                color: "#2563eb",
+                padding: "2px 8px",
+                borderRadius: 4,
+                fontSize: 11,
+                fontWeight: 500,
+              }}>
+                📂 {story.featureName}
+              </span>
+            )}
+          </div>
+        )}
 
         {story.areaPath && (
           <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 12px", fontFamily: "monospace" }}>📂 {story.areaPath}</p>
@@ -386,6 +450,10 @@ const ReviewQueuePage = () => {
     userFlow: "",
     uiBehavior: "",
     validations: [],
+    epicId: "",
+    epicName: "",
+    featureId: "",
+    featureName: "",
   });
   const [deletingId, setDeletingId]           = useState<string | null>(null);
   const [adoUsers, setAdoUsers]               = useState<AdoUser[]>([]);
@@ -396,6 +464,9 @@ const ReviewQueuePage = () => {
     message?: string;
     error?: string;
   } | null>(null);
+  const [epicsList, setEpicsList]             = useState<EpicItem[]>([]);
+  const [featuresList, setFeaturesList]       = useState<FeatureItem[]>([]);
+  const [filteredFeatures, setFilteredFeatures] = useState<FeatureItem[]>([]);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
@@ -441,6 +512,20 @@ const ReviewQueuePage = () => {
   };
 
   useEffect(() => {
+    const fetchEpicsAndFeatures = async () => {
+      try {
+        const [epicsRes, featuresRes] = await Promise.all([
+          api.get("/stories/epics-list"),
+          api.get("/stories/features-list"),
+        ]);
+        setEpicsList(epicsRes.data.epics || []);
+        setFeaturesList(featuresRes.data.features || []);
+        setFilteredFeatures(featuresRes.data.features || []);
+      } catch (error) {
+        console.error("Failed to fetch epics/features:", error);
+      }
+    };
+
     const fetchAdoUsers = async () => {
       try {
         const response = await api.get("/stories/ado-users");
@@ -456,6 +541,7 @@ const ReviewQueuePage = () => {
       }
     };
 
+    fetchEpicsAndFeatures();
     fetchAdoUsers();
     fetchAllStories();
     const iv = setInterval(fetchAllStories, 20_000);
@@ -533,6 +619,35 @@ const ReviewQueuePage = () => {
     }
   };
 
+  const handleEpicChange = (epicId: string) => {
+    const selectedEpic = epicsList.find((e) => e._id === epicId);
+    setEditForm({
+      ...editForm,
+      epicId,
+      epicName: selectedEpic?.name || "",
+      featureId: "",
+      featureName: "",
+    });
+
+    if (epicId) {
+      const filtered = featuresList.filter(
+        (f) => featureEpicId(f) === epicId,
+      );
+      setFilteredFeatures(filtered);
+    } else {
+      setFilteredFeatures(featuresList);
+    }
+  };
+
+  const handleFeatureChange = (featureId: string) => {
+    const selectedFeature = featuresList.find((f) => f._id === featureId);
+    setEditForm({
+      ...editForm,
+      featureId,
+      featureName: selectedFeature?.name || "",
+    });
+  };
+
   const handleEditClick = (story: Story) => {
     setEditingStory(story);
     const acs = (story.acceptanceCriteriaFormatted?.length
@@ -542,6 +657,7 @@ const ReviewQueuePage = () => {
       id: acId(ac, i),
       scenario: acText(ac),
     }));
+    const storyEpicId = idStr(story.epicId);
     setEditForm({
       storyTitle: story.storyTitle ?? story.title ?? "",
       type: story.type ?? "Story",
@@ -559,7 +675,19 @@ const ReviewQueuePage = () => {
       userFlow: story.userFlow ?? "",
       uiBehavior: story.uiBehavior ?? "",
       validations: story.validations ?? [],
+      epicId: storyEpicId,
+      epicName: story.epicName ?? "",
+      featureId: idStr(story.featureId),
+      featureName: story.featureName ?? "",
     });
+    if (storyEpicId) {
+      const filtered = featuresList.filter(
+        (f) => featureEpicId(f) === storyEpicId,
+      );
+      setFilteredFeatures(filtered);
+    } else {
+      setFilteredFeatures(featuresList);
+    }
     setIsEditPanelOpen(true);
   };
 
@@ -585,6 +713,10 @@ const ReviewQueuePage = () => {
         userFlow: editForm.userFlow,
         uiBehavior: editForm.uiBehavior,
         validations: editForm.validations,
+        epicId: editForm.epicId || null,
+        epicName: editForm.epicName || "",
+        featureId: editForm.featureId || null,
+        featureName: editForm.featureName || "",
       });
       setIsEditPanelOpen(false);
       fetchAllStories();
@@ -871,6 +1003,83 @@ const ReviewQueuePage = () => {
                   <option>Critical</option><option>High</option><option>Medium</option><option>Low</option>
                 </select>
               </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Epic</label>
+              <select
+                value={editForm.epicId || ""}
+                onChange={(e) => handleEpicChange(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  backgroundColor: "white",
+                  cursor: "pointer",
+                  boxSizing: "border-box",
+                }}
+              >
+                <option value="">-- Select Epic --</option>
+                {epicsList.map((epic) => (
+                  <option key={epic._id} value={epic._id}>
+                    {epic.name}
+                  </option>
+                ))}
+              </select>
+              {editForm.epicName && (
+                <p style={{
+                  fontSize: 11,
+                  color: "#16a34a",
+                  margin: "4px 0 0",
+                }}>
+                  ✅ Epic: {editForm.epicName}
+                </p>
+              )}
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={fieldLabel}>Feature</label>
+              <select
+                value={editForm.featureId || ""}
+                onChange={(e) => handleFeatureChange(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  backgroundColor: "white",
+                  cursor: "pointer",
+                  boxSizing: "border-box",
+                }}
+              >
+                <option value="">-- Select Feature --</option>
+                {filteredFeatures.map((feature) => (
+                  <option key={feature._id} value={feature._id}>
+                    {feature.name}
+                  </option>
+                ))}
+              </select>
+              {editForm.featureName && (
+                <p style={{
+                  fontSize: 11,
+                  color: "#16a34a",
+                  margin: "4px 0 0",
+                }}>
+                  ✅ Feature: {editForm.featureName}
+                </p>
+              )}
+              {editForm.epicId && filteredFeatures.length === 0 && (
+                <p style={{
+                  fontSize: 11,
+                  color: "#f59e0b",
+                  margin: "4px 0 0",
+                }}>
+                  ⚠️ No features found for this Epic
+                </p>
+              )}
             </div>
 
             <div style={{ marginBottom: 16 }}>

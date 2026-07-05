@@ -91,6 +91,58 @@ export async function getStories(req, res) {
   }
 }
 
+const getAllOrgIds = async () => {
+  try {
+    const workspaces = await SlackWorkspace.find({});
+    return [...new Set(workspaces.map((w) => w.organisationId?.toString()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+};
+
+/** GET /api/stories/epics-list — epics for edit panel dropdown */
+export const getEpicsList = async (req, res) => {
+  try {
+    const Epic = (await import("../../models/Epic.model.js")).default;
+
+    const orgIds = await getAllOrgIds();
+    const userOrgId = (req.user?.organisationId ?? req.user?.orgId)?.toString();
+    if (userOrgId && !orgIds.includes(userOrgId)) orgIds.push(userOrgId);
+
+    const epics = await Epic.find({
+      organisationId: { $in: orgIds },
+    }).sort({ name: 1 });
+
+    res.json({ success: true, epics });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/** GET /api/stories/features-list — features for edit panel dropdown */
+export const getFeaturesList = async (req, res) => {
+  try {
+    const Feature = (await import("../../models/Feature.model.js")).default;
+
+    const { epicId } = req.query;
+
+    const orgIds = await getAllOrgIds();
+    const userOrgId = (req.user?.organisationId ?? req.user?.orgId)?.toString();
+    if (userOrgId && !orgIds.includes(userOrgId)) orgIds.push(userOrgId);
+
+    const filter = { organisationId: { $in: orgIds } };
+    if (epicId) filter.epicId = epicId;
+
+    const features = await Feature.find(filter)
+      .populate("epicId", "name")
+      .sort({ name: 1 });
+
+    res.json({ success: true, features });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 /**
  * approveStory — PATCH /api/stories/:id/approve
  *

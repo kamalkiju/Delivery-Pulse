@@ -22,6 +22,8 @@ import {
   getADOUsers,
   regenerateAC,
   bulkRegenerateAC,
+  getEpicsList,
+  getFeaturesList,
   deleteDocumentStories,
   deleteStory,
   deleteBySource,
@@ -41,6 +43,12 @@ router.get("/", getStories);
 
 // GET /api/stories/ado-users — assignable ADO users for assignee dropdown
 router.get("/ado-users", getADOUsers);
+
+// GET /api/stories/epics-list — epics for edit panel dropdown
+router.get("/epics-list", getEpicsList);
+
+// GET /api/stories/features-list — features for edit panel dropdown
+router.get("/features-list", getFeaturesList);
 
 // DELETE /api/stories/delete-documents — temporary testing cleanup
 router.delete("/delete-documents", deleteDocumentStories);
