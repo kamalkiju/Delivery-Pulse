@@ -62,12 +62,6 @@ const parseStories = (responseText) => {
 
 const STORY_EXTRACTION_MODEL = "claude-haiku-4-5";
 
-const sanitizeSprint = (sprint) => {
-  if (!sprint) return "Backlog";
-  const s = sprint.toString().trim();
-  return s || "Backlog";
-};
-
 const fixStoryTitle = (title, structure) => {
   if (!title) return "General > Feature";
 
