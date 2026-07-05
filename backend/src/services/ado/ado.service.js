@@ -85,6 +85,38 @@ export const ensureEpicInADO = async (epicId, config) => {
     }
 
     if (!response.ok) {
+      const errText = responseText;
+      if (errText.includes("does not exist")) {
+        console.log("[ado] Epic type not found - retrying as Issue");
+        const fallbackUrl = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Issue?api-version=7.0`;
+
+        patchDocument[0].value = `[Epic] ${epic.name}`;
+        patchDocument.push({
+          op: "add",
+          path: "/fields/System.Tags",
+          value: "Epic",
+        });
+
+        const fallbackResponse = await fetch(fallbackUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json-patch+json",
+            Authorization: `Basic ${pat}`,
+            Accept: "application/json",
+          },
+          body: JSON.stringify(patchDocument),
+        });
+
+        const fallbackText = await fallbackResponse.text();
+        if (fallbackResponse.ok) {
+          const fallbackResult = JSON.parse(fallbackText);
+          epic.adoId = String(fallbackResult.id);
+          epic.adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${fallbackResult.id}`;
+          await epic.save();
+          console.log("[ado] ✅ Epic pushed as Issue:", epic.name, "#" + fallbackResult.id);
+          return String(fallbackResult.id);
+        }
+      }
       throw new Error(`ADO Epic error ${response.status}: ${responseText.substring(0, 200)}`);
     }
 
@@ -125,7 +157,7 @@ export const ensureFeatureInADO = async (featureId, epicAdoId, config) => {
       {
         op: "add",
         path: "/fields/System.Title",
-        value: feature.name,
+        value: `[Feature] ${feature.name}`,
       },
       {
         op: "add",
@@ -136,6 +168,11 @@ export const ensureFeatureInADO = async (featureId, epicAdoId, config) => {
         op: "add",
         path: "/fields/Microsoft.VSTS.Common.Priority",
         value: { Critical: 1, High: 2, Medium: 3, Low: 4 }[feature.priority] || 3,
+      },
+      {
+        op: "add",
+        path: "/fields/System.Tags",
+        value: "Feature",
       },
     ];
 
@@ -158,7 +195,7 @@ export const ensureFeatureInADO = async (featureId, epicAdoId, config) => {
       });
     }
 
-    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Feature?api-version=7.0`;
+    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Issue?api-version=7.0`;
 
     console.log("[ado] Pushing Feature to ADO:", feature.name);
 
