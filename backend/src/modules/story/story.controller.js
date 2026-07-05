@@ -179,16 +179,16 @@ export const approveStory = async (req, res) => {
       console.log("[approve] ADO configured - attempting push...");
       try {
         const adoModule = await import("../../services/ado/ado.service.js");
-        const createADOWorkItem =
-          adoModule.createADOWorkItem || adoModule.default?.createADOWorkItem;
+        const pushOrUpdateStoryToADO =
+          adoModule.pushOrUpdateStoryToADO || adoModule.default?.pushOrUpdateStoryToADO;
 
-        if (typeof createADOWorkItem !== "function") {
-          throw new Error("createADOWorkItem is not exported from ado.service.js");
+        if (typeof pushOrUpdateStoryToADO !== "function") {
+          throw new Error("pushOrUpdateStoryToADO is not exported from ado.service.js");
         }
 
-        adoId = await createADOWorkItem(story, adoConfig);
+        adoId = await pushOrUpdateStoryToADO(story, adoConfig);
 
-        console.log("[approve] ADO work item created:", adoId);
+        console.log("[approve] ADO work item synced:", adoId);
 
         story.adoId = String(adoId);
         story.status = "pushed-to-ado";

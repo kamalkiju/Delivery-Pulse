@@ -272,6 +272,20 @@ export async function updateStory(storyId, updates = {}) {
     throw err;
   }
 
+  if (story.adoId && !String(story.adoId).includes("MOCK")) {
+    try {
+      const adoModule = await import("../ado/ado.service.js");
+      const { pushOrUpdateStoryToADO, resolveAdoConfig } = adoModule;
+      const config = await resolveAdoConfig();
+      if (config && pushOrUpdateStoryToADO) {
+        await pushOrUpdateStoryToADO(story, config);
+        console.log("[story] ADO synced after edit:", story.adoId);
+      }
+    } catch (err) {
+      console.error("[story] ADO sync on update failed:", err.message);
+    }
+  }
+
   return story;
 }
 

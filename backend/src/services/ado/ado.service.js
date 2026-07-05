@@ -175,28 +175,189 @@ async function createWorkItemWithFallback({
   throw lastError || new Error("Failed to create ADO work item");
 }
 
-/** Link an existing ADO work item to a parent (Feature/Epic) */
+/** Link an existing ADO work item to a parent (Feature/Epic) — replaces old parent if needed */
 export async function linkWorkItemToParent(workItemId, parentAdoId, config) {
+  return replaceWorkItemParent(workItemId, parentAdoId, config);
+}
+
+export async function replaceWorkItemParent(workItemId, newParentAdoId, config) {
+  if (!workItemId || !newParentAdoId) return false;
+
   const org = config?.org || process.env.ADO_ORG;
   const project = config?.project || process.env.ADO_PROJECT;
   const token = config?.token || process.env.ADO_TOKEN;
   const pat = Buffer.from(`:${token}`).toString("base64");
   const encodedProject = encodeURIComponent(project);
 
-  const patchDocument = [
+  const getUrl = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/${workItemId}?$expand=relations&api-version=7.0`;
+  const getResp = await fetch(getUrl, {
+    headers: { Authorization: `Basic ${pat}`, Accept: "application/json" },
+  });
+
+  if (!getResp.ok) {
+    console.error("[ado] Failed to fetch work item relations:", getResp.status);
+    return false;
+  }
+
+  const wi = await getResp.json();
+  const relations = wi.relations || [];
+  const parentRels = relations.filter((r) => r.rel === "System.LinkTypes.Hierarchy-Reverse");
+
+  const alreadyLinked = parentRels.some(
+    (r) => r.url?.includes(`/workItems/${newParentAdoId}`) || r.url?.endsWith(`/${newParentAdoId}`),
+  );
+  if (alreadyLinked) {
+    console.log("[ado] Work item", workItemId, "already under parent", newParentAdoId);
+    return true;
+  }
+
+  const patchOps = [];
+  const removeIndices = parentRels
+    .map((rel) => relations.indexOf(rel))
+    .filter((idx) => idx !== -1)
+    .sort((a, b) => b - a);
+
+  for (const idx of removeIndices) {
+    patchOps.push({ op: "remove", path: `/relations/${idx}` });
+  }
+
+  patchOps.push({
+    op: "add",
+    path: "/relations/-",
+    value: {
+      rel: "System.LinkTypes.Hierarchy-Reverse",
+      url: `https://dev.azure.com/${org}/_apis/wit/workItems/${newParentAdoId}`,
+    },
+  });
+
+  const patchUrl = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
+  const response = await fetch(patchUrl, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json-patch+json",
+      Authorization: `Basic ${pat}`,
+      Accept: "application/json",
+    },
+    body: JSON.stringify(patchOps),
+  });
+
+  const text = await response.text();
+  if (response.ok) {
+    console.log("[ado] Re-linked work item", workItemId, "→ parent", newParentAdoId);
+    return true;
+  }
+
+  if (text.includes("already") || text.includes("TF201330") || text.includes("duplicate")) {
+    return true;
+  }
+
+  console.error("[ado] Replace parent failed:", response.status, text.substring(0, 200));
+  return false;
+}
+
+async function ensureStoryHierarchy(story, credentials) {
+  let epicAdoId = null;
+  let featureAdoId = null;
+
+  if (story.featureId) {
+    try {
+      if (story.epicId) {
+        epicAdoId = await ensureEpicInADO(story.epicId, credentials);
+      }
+      featureAdoId = await ensureFeatureInADO(story.featureId, epicAdoId, credentials);
+    } catch (err) {
+      console.error("[ado] Hierarchy ensure error:", err.message);
+    }
+  }
+
+  return { epicAdoId, featureAdoId };
+}
+
+function buildStoryDescriptionHtml(story) {
+  const nl = (text) => (text || "").replace(/\n/g, "<br/>");
+  let descriptionHtml = `<div><em>${story.description || ""}</em></div>`;
+
+  if (story.businessRequirement) {
+    descriptionHtml += `<br/><div><strong>Business Requirement:</strong><br/>${story.businessRequirement}</div>`;
+  }
+  if (story.userFlow) {
+    descriptionHtml += `<br/><div><strong>User Flow:</strong><br/>${nl(story.userFlow)}</div>`;
+  }
+  if (story.uiBehavior) {
+    descriptionHtml += `<br/><div><strong>UI Behavior:</strong><br/>${story.uiBehavior}</div>`;
+  }
+  if (story.validations?.length > 0) {
+    descriptionHtml += `<br/><div><strong>Validations:</strong><br/><ul>${
+      story.validations.map((v) => `<li>${v}</li>`).join("")
+    }</ul></div>`;
+  }
+  if (story.figmaLink) {
+    descriptionHtml += `<br/><div><strong>Figma:</strong> <a href="${story.figmaLink}">${story.figmaLink}</a></div>`;
+  }
+  if (story.releaseNotes) {
+    descriptionHtml += `<br/><div><strong>Release Notes:</strong><br/>${story.releaseNotes}</div>`;
+  }
+
+  const acList = story.acceptanceCriteriaFormatted || story.acceptanceCriteria || [];
+  if (acList.length > 0) {
+    descriptionHtml += "<br/><div><strong>Acceptance Criteria:</strong>";
+    acList.forEach((ac, i) => {
+      const id = typeof ac === "object" ? (ac.id || `AC ${i + 1}`) : `AC ${i + 1}`;
+      const scenario = typeof ac === "string" ? ac : (ac.scenario || "");
+      descriptionHtml += `<div style="margin:4px 0;padding:8px;background:#f8f8f8;border-left:3px solid #0078d4"><strong>${id}:</strong> ${scenario}</div>`;
+    });
+    descriptionHtml += "</div>";
+  }
+
+  return descriptionHtml;
+}
+
+function buildStoryFieldPatches(story, project) {
+  const storyTitle = extractStoryTitle(story);
+  const priorityMap = { Critical: 1, High: 2, Medium: 3, Low: 4 };
+
+  const patches = [
+    { op: "replace", path: "/fields/System.Title", value: storyTitle },
+    { op: "replace", path: "/fields/System.Description", value: buildStoryDescriptionHtml(story) },
     {
-      op: "add",
-      path: "/relations/-",
-      value: {
-        rel: "System.LinkTypes.Hierarchy-Reverse",
-        url: `https://dev.azure.com/${org}/_apis/wit/workItems/${parentAdoId}`,
-      },
+      op: "replace",
+      path: "/fields/Microsoft.VSTS.Common.Priority",
+      value: priorityMap[story.priority] || 3,
     },
   ];
 
-  const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
+  if (story.tags?.length > 0) {
+    patches.push({ op: "replace", path: "/fields/System.Tags", value: story.tags.join("; ") });
+  }
 
-  const response = await fetch(url, {
+  if (story.assignee) {
+    patches.push({ op: "replace", path: "/fields/System.AssignedTo", value: story.assignee });
+  }
+
+  if (story.sprint && VALID_SPRINT_NAMES.includes(story.sprint)) {
+    patches.push({
+      op: "replace",
+      path: "/fields/System.IterationPath",
+      value: `${project}\\${story.sprint}`,
+    });
+  }
+
+  return patches;
+}
+
+/** Update an existing ADO work item with latest story fields */
+export async function updateExistingADOWorkItem(story, config) {
+  const org = config?.org || process.env.ADO_ORG;
+  const project = config?.project || process.env.ADO_PROJECT;
+  const token = config?.token || process.env.ADO_TOKEN;
+  const pat = Buffer.from(`:${token}`).toString("base64");
+  const encodedProject = encodeURIComponent(project);
+
+  let patchDocument = buildStoryFieldPatches(story, project);
+
+  const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/${story.adoId}?api-version=7.0`;
+
+  let response = await fetch(url, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json-patch+json",
@@ -206,21 +367,48 @@ export async function linkWorkItemToParent(workItemId, parentAdoId, config) {
     body: JSON.stringify(patchDocument),
   });
 
-  const text = await response.text();
+  let text = await response.text();
 
-  if (response.ok) return true;
-
-  if (
-    text.includes("already")
-    || text.includes("TF201330")
-    || text.includes("duplicate")
-  ) {
-    console.log("[ado] Work item", workItemId, "already linked to parent");
-    return true;
+  if (!response.ok && text.includes("does not exist")) {
+    patchDocument = patchDocument.map((p) => ({ ...p, op: "add" }));
+    response = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+        Authorization: `Basic ${pat}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify(patchDocument),
+    });
+    text = await response.text();
   }
 
-  console.error("[ado] Link parent failed:", response.status, text.substring(0, 200));
-  return false;
+  if (!response.ok) {
+    throw new Error(`ADO update ${response.status}: ${text.substring(0, 200)}`);
+  }
+
+  console.log("[ado] Updated work item", story.adoId, "→", extractStoryTitle(story));
+  return story.adoId;
+}
+
+/** Create new or update existing ADO work item with correct hierarchy */
+export async function pushOrUpdateStoryToADO(story, config = null) {
+  const credentials = await resolveAdoConfig(config);
+  if (!credentials) {
+    throw new Error("ADO credentials not configured.");
+  }
+
+  const { featureAdoId } = await ensureStoryHierarchy(story, credentials);
+
+  if (story.adoId && !String(story.adoId).includes("MOCK")) {
+    await updateExistingADOWorkItem(story, credentials);
+    if (featureAdoId) {
+      await replaceWorkItemParent(story.adoId, featureAdoId, credentials);
+    }
+    return story.adoId;
+  }
+
+  return createADOWorkItem(story, credentials);
 }
 
 export const ensureEpicInADO = async (epicId, config) => {
@@ -381,56 +569,11 @@ export const createADOWorkItem = async (story, config = null) => {
   console.log("[ado] Story title for ADO:", storyTitle);
   console.log("[ado] Work item type candidates:", typeCandidates.join(", "));
 
-  const nl = (text) => (text || "").replace(/\n/g, "<br/>");
-
-  let descriptionHtml = `<div><em>${story.description || ""}</em></div>`;
-
-  if (story.businessRequirement) {
-    descriptionHtml += `<br/><div><strong>Business Requirement:</strong><br/>${story.businessRequirement}</div>`;
-  }
-  if (story.userFlow) {
-    descriptionHtml += `<br/><div><strong>User Flow:</strong><br/>${nl(story.userFlow)}</div>`;
-  }
-  if (story.uiBehavior) {
-    descriptionHtml += `<br/><div><strong>UI Behavior:</strong><br/>${story.uiBehavior}</div>`;
-  }
-  if (story.validations?.length > 0) {
-    descriptionHtml += `<br/><div><strong>Validations:</strong><br/><ul>${
-      story.validations.map((v) => `<li>${v}</li>`).join("")
-    }</ul></div>`;
-  }
-  if (story.figmaLink) {
-    descriptionHtml += `<br/><div><strong>Figma:</strong> <a href="${story.figmaLink}">${story.figmaLink}</a></div>`;
-  }
-  if (story.releaseNotes) {
-    descriptionHtml += `<br/><div><strong>Release Notes:</strong><br/>${story.releaseNotes}</div>`;
-  }
-
-  const acList = story.acceptanceCriteriaFormatted || story.acceptanceCriteria || [];
-
-  if (acList.length > 0) {
-    descriptionHtml += "<br/><div><strong>Acceptance Criteria:</strong>";
-    acList.forEach((ac, i) => {
-      const id = typeof ac === "object" ? (ac.id || `AC ${i + 1}`) : `AC ${i + 1}`;
-      const scenario = typeof ac === "string" ? ac : (ac.scenario || "");
-      descriptionHtml += `<div style="margin:4px 0;padding:8px;background:#f8f8f8;border-left:3px solid #0078d4"><strong>${id}:</strong> ${scenario}</div>`;
-    });
-    descriptionHtml += "</div>";
-  }
-
   const priorityMap = { Critical: 1, High: 2, Medium: 3, Low: 4 };
 
   const patchDocument = [
-    {
-      op: "add",
-      path: "/fields/System.Title",
-      value: storyTitle,
-    },
-    {
-      op: "add",
-      path: "/fields/System.Description",
-      value: descriptionHtml,
-    },
+    { op: "add", path: "/fields/System.Title", value: storyTitle },
+    { op: "add", path: "/fields/System.Description", value: buildStoryDescriptionHtml(story) },
     {
       op: "add",
       path: "/fields/Microsoft.VSTS.Common.Priority",
@@ -439,24 +582,15 @@ export const createADOWorkItem = async (story, config = null) => {
   ];
 
   if (story.tags?.length > 0) {
-    patchDocument.push({
-      op: "add",
-      path: "/fields/System.Tags",
-      value: story.tags.join("; "),
-    });
+    patchDocument.push({ op: "add", path: "/fields/System.Tags", value: story.tags.join("; ") });
   }
 
   if (story.assignee) {
-    patchDocument.push({
-      op: "add",
-      path: "/fields/System.AssignedTo",
-      value: story.assignee,
-    });
+    patchDocument.push({ op: "add", path: "/fields/System.AssignedTo", value: story.assignee });
     console.log("[ado] Assigning to:", story.assignee);
   }
 
-  const validSprintNames = VALID_SPRINT_NAMES;
-  if (story.sprint && validSprintNames.includes(story.sprint)) {
+  if (story.sprint && VALID_SPRINT_NAMES.includes(story.sprint)) {
     patchDocument.push({
       op: "add",
       path: "/fields/System.IterationPath",
@@ -464,27 +598,7 @@ export const createADOWorkItem = async (story, config = null) => {
     });
   }
 
-  let featureAdoId = null;
-
-  if (story.featureId) {
-    try {
-      let epicAdoId = null;
-
-      if (story.epicId) {
-        epicAdoId = await ensureEpicInADO(story.epicId, credentials);
-        console.log("[ado] Epic ADO ID:", epicAdoId);
-      }
-
-      featureAdoId = await ensureFeatureInADO(
-        story.featureId,
-        epicAdoId,
-        credentials,
-      );
-      console.log("[ado] Feature ADO ID:", featureAdoId);
-    } catch (err) {
-      console.error("[ado] Epic/Feature push error:", err.message);
-    }
-  }
+  const { featureAdoId } = await ensureStoryHierarchy(story, credentials);
 
   if (featureAdoId) {
     patchDocument.push({
@@ -605,6 +719,9 @@ export default {
   ensureEpicInADO,
   ensureFeatureInADO,
   linkWorkItemToParent,
+  replaceWorkItemParent,
+  updateExistingADOWorkItem,
+  pushOrUpdateStoryToADO,
   createADOWorkItem,
   createWorkItem,
   updateWorkItemStatus,
