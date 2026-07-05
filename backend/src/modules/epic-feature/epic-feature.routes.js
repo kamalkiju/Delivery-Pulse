@@ -11,13 +11,17 @@ import {
   updateFeature,
   deleteFeature,
   pushFeatureToADO,
-  getHierarchy
+  getHierarchy,
+  autoDetectHierarchy,
+  pushHierarchyToADO
 } from './epic-feature.controller.js'
 
 const router = express.Router()
 
 // Hierarchy
 router.get('/hierarchy', authMiddleware, getHierarchy)
+router.post('/auto-detect', authMiddleware, autoDetectHierarchy)
+router.post('/push-hierarchy-to-ado', authMiddleware, pushHierarchyToADO)
 
 // Epic routes
 router.get('/epics', authMiddleware, getEpics)
