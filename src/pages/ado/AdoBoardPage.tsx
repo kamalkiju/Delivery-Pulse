@@ -47,6 +47,16 @@ interface BulkResult {
   error?: string;
 }
 
+interface HierarchyResult {
+  message?: string;
+  error?: string;
+  results?: {
+    epics?: { pushed?: number; failed?: number };
+    features?: { pushed?: number; failed?: number };
+    stories?: { linked?: number; failed?: number };
+  };
+}
+
 const ORG = "kamal02211994";
 const PROJECT = "Delivery%20pulse";
 
@@ -59,6 +69,8 @@ export default function AdoBoardPage() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [isBulkPushing, setIsBulkPushing] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
+  const [isSyncingHierarchy, setIsSyncingHierarchy] = useState(false);
+  const [hierarchyResult, setHierarchyResult] = useState<HierarchyResult | null>(null);
   const [filterState, setFilterState] = useState("all");
 
   const fetchBoard = async () => {
@@ -140,6 +152,23 @@ export default function AdoBoardPage() {
       setBulkResult({ error: `Bulk push failed: ${msg}` });
     } finally {
       setIsBulkPushing(false);
+    }
+  };
+
+  const handleSyncHierarchy = async () => {
+    setIsSyncingHierarchy(true);
+    setHierarchyResult(null);
+    try {
+      const res = await api.post("/ado/sync-hierarchy");
+      setHierarchyResult(res.data);
+      console.log("[hierarchy] Sync result:", res.data);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Unknown error";
+      setHierarchyResult({
+        error: `Sync failed: ${msg}`,
+      });
+    } finally {
+      setIsSyncingHierarchy(false);
     }
   };
 
@@ -368,6 +397,27 @@ export default function AdoBoardPage() {
               >
                 {isSyncing ? "⟳ Syncing..." : "⟳ Sync ADO"}
               </button>
+
+              <button
+                type="button"
+                onClick={handleSyncHierarchy}
+                disabled={isSyncingHierarchy}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: isSyncingHierarchy ? "#94a3b8" : "#7c3aed",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: isSyncingHierarchy ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                {isSyncingHierarchy ? "⏳ Syncing..." : "🔗 Sync Hierarchy"}
+              </button>
             </div>
           </div>
 
@@ -400,6 +450,22 @@ export default function AdoBoardPage() {
               {bulkResult.error
                 ? `❌ ${bulkResult.error}`
                 : `✅ ${bulkResult.message}`}
+            </div>
+          )}
+
+          {hierarchyResult && (
+            <div style={{
+              marginTop: 8,
+              padding: "8px 14px",
+              backgroundColor: hierarchyResult.error ? "#fef2f2" : "#f0fdf4",
+              border: `1px solid ${hierarchyResult.error ? "#fca5a5" : "#86efac"}`,
+              borderRadius: 8,
+              fontSize: 13,
+              color: hierarchyResult.error ? "#dc2626" : "#16a34a",
+            }}>
+              {hierarchyResult.error
+                ? `❌ ${hierarchyResult.error}`
+                : `✅ ${hierarchyResult.message}`}
             </div>
           )}
 
