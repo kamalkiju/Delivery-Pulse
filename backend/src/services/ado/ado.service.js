@@ -176,11 +176,12 @@ export const ensureFeatureInADO = async (featureId, epicAdoId, config) => {
       },
     ];
 
-    if (feature.sprint && feature.sprint !== "Backlog") {
+    const validSprints = ["Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4"];
+    if (feature.sprint && validSprints.includes(feature.sprint)) {
       patchDocument.push({
         op: "add",
         path: "/fields/System.IterationPath",
-        value: `${project}\\${feature.sprint}`,
+        value: `${conn?.adoProject || project}\\${feature.sprint}`,
       });
     }
 
@@ -326,6 +327,15 @@ export const createADOWorkItem = async (story, config = null) => {
       value: story.assignee,
     });
     console.log("[ado] Assigning to:", story.assignee);
+  }
+
+  const validSprintNames = ["Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4"];
+  if (story.sprint && validSprintNames.includes(story.sprint)) {
+    patchDocument.push({
+      op: "add",
+      path: "/fields/System.IterationPath",
+      value: `${project}\\${story.sprint}`,
+    });
   }
 
   let featureAdoId = null;
