@@ -60,6 +60,29 @@ const parseStories = (responseText) => {
 
 const STORY_EXTRACTION_MODEL = "claude-haiku-4-5";
 
+const sanitizeSprint = (sprint) => {
+  if (!sprint) return "Backlog";
+
+  const s = sprint.toString().trim();
+
+  const validSprints = [
+    "Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4",
+    "Current", "Next", "Backlog",
+  ];
+
+  if (validSprints.includes(s)) return s;
+
+  const lower = s.toLowerCase();
+  if (lower.includes("current")) return "Current";
+  if (lower.includes("next")) return "Next";
+  if (lower.includes("1")) return "Sprint 1";
+  if (lower.includes("2")) return "Sprint 2";
+  if (lower.includes("3")) return "Sprint 3";
+  if (lower.includes("4")) return "Sprint 4";
+
+  return "Backlog";
+};
+
 const fixStoryTitle = (title, structure) => {
   if (!title) return "General > Feature";
 
@@ -629,7 +652,7 @@ Return ONLY this JSON structure, nothing else, no markdown:
           acceptanceCriteria: acFormatted.map((ac) => ac.scenario),
           acceptanceCriteriaFormatted: acFormatted,
           releaseNotes: storyData.releaseNotes || "",
-          sprint: storyData.sprint || "Backlog",
+          sprint: sanitizeSprint(storyData.sprint),
           isAIGenerated: true,
           sequence: i + 1,
           createdAt: new Date(Date.now() + (i * 100)),
