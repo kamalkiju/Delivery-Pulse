@@ -28,6 +28,201 @@ export async function resolveAdoConfig(config = null) {
   return null;
 }
 
+const VALID_SPRINT_NAMES = ["Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4"];
+const PRIORITY_MAP = { Critical: 1, High: 2, Medium: 3, Low: 4 };
+
+/** Extract leaf story title from "Epic > Feature > Story" format */
+export function extractStoryTitle(story) {
+  const raw = story.storyTitle || story.title || "";
+  const parts = raw.split(">").map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) return parts[parts.length - 1];
+  return raw || "Untitled Story";
+}
+
+async function getAvailableWorkItemTypes(config) {
+  const conn = await AdoConnection.findOne({
+    isActive: true,
+    connectionStatus: "connected",
+  }).sort({ isDefault: -1, createdAt: -1 });
+
+  if (conn?.workItemTypes?.length) {
+    return conn.workItemTypes;
+  }
+
+  const org = config?.org || conn?.adoOrg || process.env.ADO_ORG;
+  const project = config?.project || conn?.adoProject || process.env.ADO_PROJECT;
+  const token = config?.token || conn?.patToken || process.env.ADO_TOKEN;
+
+  if (!org || !project || !token) {
+    return ["User Story", "Feature", "Epic", "Issue", "Task"];
+  }
+
+  try {
+    const pat = Buffer.from(`:${token}`).toString("base64");
+    const url = `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_apis/wit/workitemtypes?api-version=7.0`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Basic ${pat}`, Accept: "application/json" },
+    });
+    if (response.ok) {
+      const data = await response.json();
+      const types = (data.value || []).map((t) => t.name);
+      if (types.length) {
+        console.log("[ado] Available work item types:", types.join(", "));
+        return types;
+      }
+    }
+  } catch (err) {
+    console.warn("[ado] Could not fetch work item types:", err.message);
+  }
+
+  return ["User Story", "Feature", "Epic", "Issue", "Task"];
+}
+
+function resolveTypeCandidates(availableTypes, preferredOrder) {
+  const available = new Set(availableTypes);
+  const matched = preferredOrder.filter((t) => available.has(t));
+  return matched.length ? matched : [preferredOrder[preferredOrder.length - 1]];
+}
+
+async function createWorkItemWithFallback({
+  org,
+  project,
+  token,
+  typeCandidates,
+  title,
+  description = "",
+  priority,
+  tags,
+  parentAdoId,
+  iterationPath,
+}) {
+  const pat = Buffer.from(`:${token}`).toString("base64");
+  const encodedProject = encodeURIComponent(project);
+  let lastError = null;
+
+  for (const workItemType of typeCandidates) {
+    const patchDocument = [
+      { op: "add", path: "/fields/System.Title", value: title },
+      { op: "add", path: "/fields/System.Description", value: description || "" },
+      {
+        op: "add",
+        path: "/fields/Microsoft.VSTS.Common.Priority",
+        value: PRIORITY_MAP[priority] || 3,
+      },
+    ];
+
+    if (tags) {
+      patchDocument.push({ op: "add", path: "/fields/System.Tags", value: tags });
+    }
+
+    if (iterationPath) {
+      patchDocument.push({
+        op: "add",
+        path: "/fields/System.IterationPath",
+        value: iterationPath,
+      });
+    }
+
+    if (parentAdoId) {
+      patchDocument.push({
+        op: "add",
+        path: "/relations/-",
+        value: {
+          rel: "System.LinkTypes.Hierarchy-Reverse",
+          url: `https://dev.azure.com/${org}/_apis/wit/workItems/${parentAdoId}`,
+        },
+      });
+    }
+
+    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$${encodeURIComponent(workItemType)}?api-version=7.0`;
+
+    console.log("[ado] Creating", workItemType + ":", title.substring(0, 60));
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+        Authorization: `Basic ${pat}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify(patchDocument),
+    });
+
+    const responseText = await response.text();
+
+    if (responseText.includes("<!DOCTYPE")) {
+      throw new Error("ADO auth failed");
+    }
+
+    if (response.ok) {
+      const result = JSON.parse(responseText);
+      return { id: String(result.id), workItemType };
+    }
+
+    if (
+      responseText.includes("does not exist")
+      || responseText.includes("not found")
+      || responseText.includes("Cannot find work item type")
+    ) {
+      console.log(`[ado] Type "${workItemType}" unavailable, trying next...`);
+      lastError = new Error(`ADO ${response.status}: ${responseText.substring(0, 200)}`);
+      continue;
+    }
+
+    throw new Error(`ADO ${response.status}: ${responseText.substring(0, 200)}`);
+  }
+
+  throw lastError || new Error("Failed to create ADO work item");
+}
+
+/** Link an existing ADO work item to a parent (Feature/Epic) */
+export async function linkWorkItemToParent(workItemId, parentAdoId, config) {
+  const org = config?.org || process.env.ADO_ORG;
+  const project = config?.project || process.env.ADO_PROJECT;
+  const token = config?.token || process.env.ADO_TOKEN;
+  const pat = Buffer.from(`:${token}`).toString("base64");
+  const encodedProject = encodeURIComponent(project);
+
+  const patchDocument = [
+    {
+      op: "add",
+      path: "/relations/-",
+      value: {
+        rel: "System.LinkTypes.Hierarchy-Reverse",
+        url: `https://dev.azure.com/${org}/_apis/wit/workItems/${parentAdoId}`,
+      },
+    },
+  ];
+
+  const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
+
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json-patch+json",
+      Authorization: `Basic ${pat}`,
+      Accept: "application/json",
+    },
+    body: JSON.stringify(patchDocument),
+  });
+
+  const text = await response.text();
+
+  if (response.ok) return true;
+
+  if (
+    text.includes("already")
+    || text.includes("TF201330")
+    || text.includes("duplicate")
+  ) {
+    console.log("[ado] Work item", workItemId, "already linked to parent");
+    return true;
+  }
+
+  console.error("[ado] Link parent failed:", response.status, text.substring(0, 200));
+  return false;
+}
+
 export const ensureEpicInADO = async (epicId, config) => {
   try {
     const Epic = (await import("../../models/Epic.model.js")).default;
@@ -43,92 +238,47 @@ export const ensureEpicInADO = async (epicId, config) => {
     const org = config?.org || process.env.ADO_ORG;
     const project = config?.project || process.env.ADO_PROJECT;
     const token = config?.token || process.env.ADO_TOKEN;
-    const pat = Buffer.from(`:${token}`).toString("base64");
     const encodedProject = encodeURIComponent(project);
+    const availableTypes = await getAvailableWorkItemTypes(config);
 
-    const patchDocument = [
-      {
-        op: "add",
-        path: "/fields/System.Title",
-        value: epic.name,
-      },
-      {
-        op: "add",
-        path: "/fields/System.Description",
-        value: epic.description || "",
-      },
-      {
-        op: "add",
-        path: "/fields/Microsoft.VSTS.Common.Priority",
-        value: { Critical: 1, High: 2, Medium: 3, Low: 4 }[epic.priority] || 3,
-      },
-    ];
-
-    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Epic?api-version=7.0`;
-
-    console.log("[ado] Pushing Epic to ADO:", epic.name);
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json-patch+json",
-        Authorization: `Basic ${pat}`,
-        Accept: "application/json",
-      },
-      body: JSON.stringify(patchDocument),
-    });
-
-    const responseText = await response.text();
-
-    if (responseText.includes("<!DOCTYPE")) {
-      throw new Error("ADO auth failed for Epic push");
-    }
-
-    if (!response.ok) {
-      const errText = responseText;
-      if (errText.includes("does not exist")) {
-        console.log("[ado] Epic type not found - retrying as Issue");
-        const fallbackUrl = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Issue?api-version=7.0`;
-
-        patchDocument[0].value = `[Epic] ${epic.name}`;
-        patchDocument.push({
-          op: "add",
-          path: "/fields/System.Tags",
-          value: "Epic",
+    let result;
+    if (availableTypes.includes("Epic")) {
+      try {
+        result = await createWorkItemWithFallback({
+          org,
+          project,
+          token,
+          typeCandidates: ["Epic"],
+          title: epic.name,
+          description: epic.description,
+          priority: epic.priority,
+          parentAdoId: null,
         });
-
-        const fallbackResponse = await fetch(fallbackUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json-patch+json",
-            Authorization: `Basic ${pat}`,
-            Accept: "application/json",
-          },
-          body: JSON.stringify(patchDocument),
-        });
-
-        const fallbackText = await fallbackResponse.text();
-        if (fallbackResponse.ok) {
-          const fallbackResult = JSON.parse(fallbackText);
-          epic.adoId = String(fallbackResult.id);
-          epic.adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${fallbackResult.id}`;
-          await epic.save();
-          console.log("[ado] ✅ Epic pushed as Issue:", epic.name, "#" + fallbackResult.id);
-          return String(fallbackResult.id);
-        }
+      } catch (err) {
+        console.log("[ado] Epic type failed, falling back to Issue:", err.message);
       }
-      throw new Error(`ADO Epic error ${response.status}: ${responseText.substring(0, 200)}`);
     }
 
-    const result = JSON.parse(responseText);
-    const adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${result.id}`;
+    if (!result) {
+      result = await createWorkItemWithFallback({
+        org,
+        project,
+        token,
+        typeCandidates: ["Issue"],
+        title: `[Epic] ${epic.name}`,
+        description: epic.description,
+        priority: epic.priority,
+        tags: "Epic",
+        parentAdoId: null,
+      });
+    }
 
-    epic.adoId = String(result.id);
-    epic.adoUrl = adoUrl;
+    epic.adoId = result.id;
+    epic.adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${result.id}`;
     await epic.save();
 
-    console.log("[ado] ✅ Epic pushed to ADO:", epic.name, "#" + result.id);
-    return String(result.id);
+    console.log("[ado] ✅ Epic pushed as", result.workItemType + ":", epic.name, "#" + result.id);
+    return result.id;
   } catch (error) {
     console.error("[ado] Epic push failed:", error.message);
     return null;
@@ -150,89 +300,58 @@ export const ensureFeatureInADO = async (featureId, epicAdoId, config) => {
     const org = config?.org || process.env.ADO_ORG;
     const project = config?.project || process.env.ADO_PROJECT;
     const token = config?.token || process.env.ADO_TOKEN;
-    const pat = Buffer.from(`:${token}`).toString("base64");
     const encodedProject = encodeURIComponent(project);
     const conn = await AdoConnection.findOne({
       isActive: true,
       connectionStatus: "connected",
     }).sort({ isDefault: -1, createdAt: -1 });
 
-    const patchDocument = [
-      {
-        op: "add",
-        path: "/fields/System.Title",
-        value: `[Feature] ${feature.name}`,
-      },
-      {
-        op: "add",
-        path: "/fields/System.Description",
-        value: feature.description || "",
-      },
-      {
-        op: "add",
-        path: "/fields/Microsoft.VSTS.Common.Priority",
-        value: { Critical: 1, High: 2, Medium: 3, Low: 4 }[feature.priority] || 3,
-      },
-      {
-        op: "add",
-        path: "/fields/System.Tags",
-        value: "Feature",
-      },
-    ];
+    const availableTypes = await getAvailableWorkItemTypes(config);
 
-    const validSprints = ["Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4"];
-    if (feature.sprint && validSprints.includes(feature.sprint)) {
-      patchDocument.push({
-        op: "add",
-        path: "/fields/System.IterationPath",
-        value: `${conn?.adoProject || project}\\${feature.sprint}`,
+    const iterationPath = feature.sprint && VALID_SPRINT_NAMES.includes(feature.sprint)
+      ? `${conn?.adoProject || project}\\${feature.sprint}`
+      : undefined;
+
+    let result;
+    if (availableTypes.includes("Feature")) {
+      try {
+        result = await createWorkItemWithFallback({
+          org,
+          project,
+          token,
+          typeCandidates: ["Feature"],
+          title: feature.name,
+          description: feature.description,
+          priority: feature.priority,
+          parentAdoId: epicAdoId,
+          iterationPath,
+        });
+      } catch (err) {
+        console.log("[ado] Feature type failed, falling back to Issue:", err.message);
+      }
+    }
+
+    if (!result) {
+      result = await createWorkItemWithFallback({
+        org,
+        project,
+        token,
+        typeCandidates: ["Issue"],
+        title: `[Feature] ${feature.name}`,
+        description: feature.description,
+        priority: feature.priority,
+        tags: "Feature",
+        parentAdoId: epicAdoId,
+        iterationPath,
       });
     }
 
-    if (epicAdoId) {
-      patchDocument.push({
-        op: "add",
-        path: "/relations/-",
-        value: {
-          rel: "System.LinkTypes.Hierarchy-Reverse",
-          url: `https://dev.azure.com/${org}/_apis/wit/workItems/${epicAdoId}`,
-        },
-      });
-    }
-
-    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Issue?api-version=7.0`;
-
-    console.log("[ado] Pushing Feature to ADO:", feature.name);
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json-patch+json",
-        Authorization: `Basic ${pat}`,
-        Accept: "application/json",
-      },
-      body: JSON.stringify(patchDocument),
-    });
-
-    const responseText = await response.text();
-
-    if (responseText.includes("<!DOCTYPE")) {
-      throw new Error("ADO auth failed for Feature push");
-    }
-
-    if (!response.ok) {
-      throw new Error(`ADO Feature error ${response.status}: ${responseText.substring(0, 200)}`);
-    }
-
-    const result = JSON.parse(responseText);
-    const adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${result.id}`;
-
-    feature.adoId = String(result.id);
-    feature.adoUrl = adoUrl;
+    feature.adoId = result.id;
+    feature.adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${result.id}`;
     await feature.save();
 
-    console.log("[ado] ✅ Feature pushed to ADO:", feature.name, "#" + result.id);
-    return String(result.id);
+    console.log("[ado] ✅ Feature pushed as", result.workItemType + ":", feature.name, "#" + result.id);
+    return result.id;
   } catch (error) {
     console.error("[ado] Feature push failed:", error.message);
     return null;
@@ -255,9 +374,12 @@ export const createADOWorkItem = async (story, config = null) => {
   console.log("[ado] token preview:", token.substring(0, 8) + "...");
 
   const pat = Buffer.from(`:${token}`).toString("base64");
-  const workItemType = "Issue";
+  const availableTypes = await getAvailableWorkItemTypes(credentials);
+  const typeCandidates = resolveTypeCandidates(availableTypes, ["User Story", "Issue"]);
+  const storyTitle = extractStoryTitle(story);
 
-  console.log("[ado] workItemType:", workItemType);
+  console.log("[ado] Story title for ADO:", storyTitle);
+  console.log("[ado] Work item type candidates:", typeCandidates.join(", "));
 
   const nl = (text) => (text || "").replace(/\n/g, "<br/>");
 
@@ -302,7 +424,7 @@ export const createADOWorkItem = async (story, config = null) => {
     {
       op: "add",
       path: "/fields/System.Title",
-      value: story.storyTitle || story.title || "Untitled Story",
+      value: storyTitle,
     },
     {
       op: "add",
@@ -333,7 +455,7 @@ export const createADOWorkItem = async (story, config = null) => {
     console.log("[ado] Assigning to:", story.assignee);
   }
 
-  const validSprintNames = ["Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4"];
+  const validSprintNames = VALID_SPRINT_NAMES;
   if (story.sprint && validSprintNames.includes(story.sprint)) {
     patchDocument.push({
       op: "add",
@@ -377,39 +499,54 @@ export const createADOWorkItem = async (story, config = null) => {
   }
 
   const encodedProject = encodeURIComponent(project);
-  const encodedType = encodeURIComponent(workItemType);
-  const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$${encodedType}?api-version=7.0`;
+  let lastError = null;
 
-  console.log("[ado] POST:", url);
+  for (const workItemType of typeCandidates) {
+    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$${encodeURIComponent(workItemType)}?api-version=7.0`;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json-patch+json",
-      Authorization: `Basic ${pat}`,
-      Accept: "application/json",
-    },
-    body: JSON.stringify(patchDocument),
-  });
+    console.log("[ado] POST:", url);
 
-  console.log("[ado] Response status:", response.status);
-  const responseText = await response.text();
-  console.log("[ado] Response preview:", responseText.substring(0, 100));
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+        Authorization: `Basic ${pat}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify(patchDocument),
+    });
 
-  if (responseText.includes("<!DOCTYPE") || responseText.includes("<html")) {
-    throw new Error(
-      "ADO returned HTML. PAT token invalid or expired. "
-      + "Update token in Settings → ADO Integration.",
-    );
-  }
+    console.log("[ado] Response status:", response.status);
+    const responseText = await response.text();
+    console.log("[ado] Response preview:", responseText.substring(0, 100));
 
-  if (!response.ok) {
+    if (responseText.includes("<!DOCTYPE") || responseText.includes("<html")) {
+      throw new Error(
+        "ADO returned HTML. PAT token invalid or expired. "
+        + "Update token in Settings → ADO Integration.",
+      );
+    }
+
+    if (response.ok) {
+      const result = JSON.parse(responseText);
+      console.log("[ado] Work item created as", workItemType + ":", result.id);
+      return result.id;
+    }
+
+    if (
+      responseText.includes("does not exist")
+      || responseText.includes("not found")
+      || responseText.includes("Cannot find work item type")
+    ) {
+      console.log(`[ado] Type "${workItemType}" unavailable for story, trying next...`);
+      lastError = new Error(`ADO ${response.status}: ${responseText.substring(0, 200)}`);
+      continue;
+    }
+
     throw new Error(`ADO ${response.status}: ${responseText.substring(0, 200)}`);
   }
 
-  const result = JSON.parse(responseText);
-  console.log("[ado] Work item created:", result.id);
-  return result.id;
+  throw lastError || new Error("Failed to create story work item in ADO");
 };
 
 /** @deprecated Use createADOWorkItem — kept for story.service compatibility */
@@ -464,8 +601,10 @@ export async function updateWorkItemStatus(adoId, status) {
 
 export default {
   resolveAdoConfig,
+  extractStoryTitle,
   ensureEpicInADO,
   ensureFeatureInADO,
+  linkWorkItemToParent,
   createADOWorkItem,
   createWorkItem,
   updateWorkItemStatus,

@@ -277,13 +277,16 @@ export const bulkPushToADO = async (req, res) => {
 
 export const syncHierarchyToADO = async (req, res) => {
   try {
+    const Epic = (await import("../../models/Epic.model.js")).default;
+    const Feature = (await import("../../models/Feature.model.js")).default;
     const AdoConnection = (await import(
       "../../models/AdoConnection.model.js"
     )).default;
-    const Epic = (await import("../../models/Epic.model.js")).default;
-    const Feature = (await import(
-      "../../models/Feature.model.js"
-    )).default;
+    const {
+      ensureEpicInADO,
+      ensureFeatureInADO,
+      linkWorkItemToParent,
+    } = await import("../../services/ado/ado.service.js");
 
     const conn = await AdoConnection.findOne({
       isDefault: true,
@@ -301,92 +304,10 @@ export const syncHierarchyToADO = async (req, res) => {
       });
     }
 
-    const pat = Buffer.from(`:${conn.patToken}`).toString("base64");
-    const encodedProject = encodeURIComponent(conn.adoProject);
-
-    const pushWorkItem = async (type, title, description, priority, parentAdoId) => {
-      const patchDocument = [
-        {
-          op: "add",
-          path: "/fields/System.Title",
-          value: title,
-        },
-        {
-          op: "add",
-          path: "/fields/System.Description",
-          value: description || "",
-        },
-        {
-          op: "add",
-          path: "/fields/Microsoft.VSTS.Common.Priority",
-          value: { Critical: 1, High: 2, Medium: 3, Low: 4 }[priority] || 3,
-        },
-      ];
-
-      if (parentAdoId) {
-        patchDocument.push({
-          op: "add",
-          path: "/relations/-",
-          value: {
-            rel: "System.LinkTypes.Hierarchy-Reverse",
-            url: `https://dev.azure.com/${conn.adoOrg}/_apis/wit/workItems/${parentAdoId}`,
-          },
-        });
-      }
-
-      const workItemType = type === "Epic" ? "Epic" : "Issue";
-      const url = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_apis/wit/workitems/$${workItemType}?api-version=7.0`;
-
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json-patch+json",
-          Authorization: `Basic ${pat}`,
-          Accept: "application/json",
-        },
-        body: JSON.stringify(patchDocument),
-      });
-
-      const text = await response.text();
-      if (!response.ok || text.includes("<!DOCTYPE")) {
-        throw new Error(`ADO ${response.status}: ${text.substring(0, 200)}`);
-      }
-
-      return JSON.parse(text);
-    };
-
-    const updateWorkItemParent = async (workItemId, parentAdoId) => {
-      const patchDocument = [
-        {
-          op: "add",
-          path: "/relations/-",
-          value: {
-            rel: "System.LinkTypes.Hierarchy-Reverse",
-            url: `https://dev.azure.com/${conn.adoOrg}/_apis/wit/workItems/${parentAdoId}`,
-          },
-        },
-      ];
-
-      const url = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
-
-      const response = await fetch(url, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json-patch+json",
-          Authorization: `Basic ${pat}`,
-          Accept: "application/json",
-        },
-        body: JSON.stringify(patchDocument),
-      });
-
-      const text = await response.text();
-      if (!response.ok) {
-        console.error("[sync-hierarchy] Update parent failed:",
-          response.status, text.substring(0, 200));
-        return false;
-      }
-
-      return true;
+    const config = {
+      org: conn.adoOrg,
+      project: conn.adoProject,
+      token: conn.patToken,
     };
 
     const results = {
@@ -395,85 +316,95 @@ export const syncHierarchyToADO = async (req, res) => {
       stories: { linked: 0, skipped: 0, failed: 0 },
     };
 
-    const epicsWithoutADO = await Epic.find({ adoId: null });
+    const missingAdoFilter = {
+      $or: [{ adoId: null }, { adoId: "" }, { adoId: { $exists: false } }],
+    };
+
+    const epicsWithoutADO = await Epic.find(missingAdoFilter);
     console.log("[sync-hierarchy] Epics to push:", epicsWithoutADO.length);
 
     for (const epic of epicsWithoutADO) {
       try {
-        const result = await pushWorkItem(
-          "Epic",
-          epic.name,
-          epic.description,
-          epic.priority,
-          null,
-        );
-        epic.adoId = String(result.id);
-        epic.adoUrl = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_workitems/edit/${result.id}`;
-        await epic.save();
-        results.epics.pushed++;
-        console.log("[sync-hierarchy] ✅ Epic pushed:",
-          epic.name, "#" + result.id);
+        const adoId = await ensureEpicInADO(epic._id, config);
+        if (adoId) {
+          results.epics.pushed++;
+          console.log("[sync-hierarchy] ✅ Epic pushed:", epic.name, "#" + adoId);
+        } else {
+          results.epics.failed++;
+        }
         await new Promise((r) => setTimeout(r, 300));
       } catch (err) {
         results.epics.failed++;
-        console.error("[sync-hierarchy] ❌ Epic failed:",
-          epic.name, err.message);
+        console.error("[sync-hierarchy] ❌ Epic failed:", epic.name, err.message);
       }
     }
 
-    const featuresWithoutADO = await Feature.find({ adoId: null })
+    const featuresWithoutADO = await Feature.find(missingAdoFilter)
       .populate("epicId");
-    console.log("[sync-hierarchy] Features to push:",
-      featuresWithoutADO.length);
+    console.log("[sync-hierarchy] Features to push:", featuresWithoutADO.length);
 
     for (const feature of featuresWithoutADO) {
       try {
-        const epicAdoId = feature.epicId?.adoId || null;
-        const result = await pushWorkItem(
-          "Issue",
-          `[Feature] ${feature.name}`,
-          feature.description,
-          feature.priority,
-          epicAdoId,
-        );
-        feature.adoId = String(result.id);
-        feature.adoUrl = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_workitems/edit/${result.id}`;
-        await feature.save();
-        results.features.pushed++;
-        console.log("[sync-hierarchy] ✅ Feature pushed:",
-          feature.name, "#" + result.id,
-          epicAdoId ? `→ Epic #${epicAdoId}` : "");
+        let epicAdoId = feature.epicId?.adoId || null;
+        if (!epicAdoId && feature.epicId?._id) {
+          epicAdoId = await ensureEpicInADO(feature.epicId._id, config);
+        }
+
+        const adoId = await ensureFeatureInADO(feature._id, epicAdoId, config);
+        if (adoId) {
+          results.features.pushed++;
+          console.log("[sync-hierarchy] ✅ Feature pushed:",
+            feature.name, "#" + adoId,
+            epicAdoId ? `→ Epic #${epicAdoId}` : "");
+        } else {
+          results.features.failed++;
+        }
         await new Promise((r) => setTimeout(r, 300));
       } catch (err) {
         results.features.failed++;
-        console.error("[sync-hierarchy] ❌ Feature failed:",
-          feature.name, err.message);
+        console.error("[sync-hierarchy] ❌ Feature failed:", feature.name, err.message);
       }
     }
 
     const storiesWithADO = await Story.find({
-      adoId: { $exists: true, $ne: null },
+      adoId: { $exists: true, $nin: [null, ""] },
       featureId: { $exists: true, $ne: null },
-    }).populate("featureId");
+    })
+      .populate("featureId")
+      .populate("epicId");
 
     console.log("[sync-hierarchy] Stories to link:", storiesWithADO.length);
 
     for (const story of storiesWithADO) {
       try {
-        const featureAdoId = story.featureId?.adoId;
-        if (!featureAdoId) {
-          results.stories.skipped++;
-          continue;
-        }
-
         if (!story.adoId || story.adoId.includes("MOCK")) {
           results.stories.skipped++;
           continue;
         }
 
-        const linked = await updateWorkItemParent(
+        let featureAdoId = story.featureId?.adoId || null;
+
+        if (!featureAdoId && story.featureId?._id) {
+          let epicAdoId = story.epicId?.adoId || null;
+          if (!epicAdoId && story.epicId?._id) {
+            epicAdoId = await ensureEpicInADO(story.epicId._id, config);
+          }
+          featureAdoId = await ensureFeatureInADO(
+            story.featureId._id,
+            epicAdoId,
+            config,
+          );
+        }
+
+        if (!featureAdoId) {
+          results.stories.skipped++;
+          continue;
+        }
+
+        const linked = await linkWorkItemToParent(
           story.adoId,
           featureAdoId,
+          config,
         );
 
         if (linked) {
