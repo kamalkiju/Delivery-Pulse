@@ -1,6 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 import Story from "../../models/Story.model.js";
 import Document from "../../models/Document.model.js";
 
@@ -57,23 +56,66 @@ const fixStoryTitle = (title, structure) => {
   return `General > ${title}`;
 };
 
-const extractText = async (buffer, fileType) => {
+const extractText = async (buffer, fileType, originalName, mimetype) => {
   try {
     const type = (fileType || "").toLowerCase();
 
     if (
       type === "docx" ||
       type === "doc" ||
+      originalName?.endsWith(".docx") ||
+      mimetype?.includes("wordprocessingml") ||
       type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ) {
-      const result = await mammoth.extractRawText({ buffer });
-      return result.value;
+      try {
+        const rawResult = await mammoth.extractRawText({ buffer });
+        let text = rawResult.value || "";
+
+        console.log("[document] Raw text length:", text.length);
+
+        if (text.length < 500) {
+          const htmlResult = await mammoth.convertToHtml({ buffer });
+          const htmlText = htmlResult.value
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+          console.log("[document] HTML text length:", htmlText.length);
+          if (htmlText.length > text.length) {
+            text = htmlText;
+          }
+        }
+
+        console.log("[document] Final extracted text length:", text.length);
+        return text;
+      } catch (err) {
+        console.error("[document] Mammoth error:", err.message);
+        return "";
+      }
     }
 
-    if (type === "pdf" || type === "application/pdf") {
-      const parser = new PDFParse({ data: buffer });
-      const result = await parser.getText();
-      return result.text;
+    if (
+      type === "pdf" ||
+      type === "application/pdf" ||
+      (buffer[0] === 0x25 && buffer[1] === 0x50)
+    ) {
+      try {
+        const pdfParseModule = await import("pdf-parse");
+        const pdfParseFn = pdfParseModule.default ||
+          pdfParseModule.PDFParse ||
+          Object.values(pdfParseModule)[0];
+
+        if (pdfParseModule.PDFParse) {
+          const parser = new pdfParseModule.PDFParse({ data: buffer });
+          const result = await parser.getText();
+          return result.text || "";
+        }
+
+        const result = await pdfParseFn(buffer);
+        return result.text || "";
+      } catch (err) {
+        console.error("[document] PDF parse error:", err.message);
+        return "";
+      }
     }
 
     if (type === "xlsx" || type === "xls") {
@@ -138,7 +180,12 @@ export const uploadDocument = async (req, res) => {
       file.originalname.split(".").pop()?.toLowerCase();
 
     console.log("[document] Extracting text from buffer...");
-    const extractedText = await extractText(fileBuffer, fileType);
+    const extractedText = await extractText(
+      fileBuffer,
+      fileType,
+      file.originalname,
+      file.mimetype,
+    );
     console.log("[document] Extracted text length:", extractedText.length);
 
     if (!extractedText || extractedText.length < 100) {
@@ -174,10 +221,16 @@ export const uploadDocument = async (req, res) => {
 
     // ── Split into chunks (with overlap to avoid missing stories at boundaries) ─
     const CHUNK_SIZE = 3000;
-    const chunks = [];
-    for (let i = 0; i < documentText.length; i += CHUNK_SIZE) {
-      const start = Math.max(0, i - 200);
-      chunks.push(documentText.substring(start, i + CHUNK_SIZE));
+    const OVERLAP = 200;
+
+    let chunks = [];
+    if (documentText.length <= CHUNK_SIZE + OVERLAP) {
+      chunks = [documentText];
+      console.log("[document] Small document - processing as single chunk");
+    } else {
+      for (let i = 0; i < documentText.length; i += CHUNK_SIZE - OVERLAP) {
+        chunks.push(documentText.slice(i, i + CHUNK_SIZE));
+      }
     }
     console.log("[document] Processing", chunks.length, "chunk(s)");
 
@@ -258,6 +311,10 @@ ${documentStructure.epics.map((e) => `- ${e.name}: ${e.description}`).join("\n")
 
       const prompt = `You are a senior Business Analyst.
 Extract ALL user stories from this document section.
+
+This may be an amendments document describing changes
+to existing features. Extract each change or update
+as a separate user story.
 
 ${epicsContext}
 
