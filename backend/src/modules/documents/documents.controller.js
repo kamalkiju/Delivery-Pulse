@@ -31,6 +31,35 @@ function parseChunkResponse(text) {
   }
 }
 
+const parseStories = (responseText) => {
+  try {
+    let text = responseText.trim();
+
+    text = text.replace(/```json\s*/gi, "")
+      .replace(/```\s*/gi, "")
+      .trim();
+
+    const jsonStart = text.indexOf("{");
+    const jsonEnd = text.lastIndexOf("}");
+
+    if (jsonStart === -1 || jsonEnd === -1) {
+      console.log("[document] No JSON found in response");
+      return [];
+    }
+
+    const jsonStr = text.substring(jsonStart, jsonEnd + 1);
+    const parsed = JSON.parse(jsonStr);
+
+    return parsed.stories || parsed.userStories || [];
+  } catch (err) {
+    console.error("[document] JSON parse error:", err.message);
+    console.error("[document] Failed text:", responseText.substring(0, 300));
+    return [];
+  }
+};
+
+const STORY_EXTRACTION_MODEL = "claude-haiku-4-5";
+
 const fixStoryTitle = (title, structure) => {
   if (!title) return "General > Feature";
 
@@ -363,62 +392,69 @@ ${documentText.substring(0, 5000)}`;
 
       console.log(`[document] Processing chunk ${chunkIndex + 1}/${chunks.length}`);
 
-      const storyExtractionPrompt = `You are a senior Business Analyst.
-Analyze this document and extract ALL requirements as user stories.
+      console.log("[document] Chunk text preview:",
+        chunk.substring(0, 500));
 
-DOCUMENT CONTENT:
+      const prompt = `You are a senior Business Analyst.
+Read this document content carefully and extract user stories.
+
+DOCUMENT:
 ${chunk}
 
-IMPORTANT RULES:
-1. Extract EVERY requirement, change, feature, or update mentioned
-2. Each table row with a requirement = one story
-3. Each bullet point with a requirement = one story
-4. Each UI change or screen update = one story
-5. Each workflow step = one story
-6. Even small changes like "add a button" or "show/hide a field" = one story
-7. Do NOT skip anything — extract maximum stories possible
+RULES:
+- Extract every requirement, screen change, UI update, or feature
+- Even small UI changes = a story
+- Return minimum 3 stories from any document with requirements
+- Each story needs 3 acceptance criteria in Given/When/Then format
 
-Return ONLY raw JSON with no markdown:
+Return ONLY this JSON structure, nothing else, no markdown:
 {
   "stories": [
     {
-      "storyTitle": "Epic/Module Name > Feature Name",
-      "type": "Story or Bug or Feature or Task",
-      "priority": "Critical or High or Medium or Low",
-      "description": "As a [specific user role] I need [specific requirement] So that [business value]",
+      "storyTitle": "Module > Feature Name",
+      "type": "Story",
+      "priority": "Medium",
+      "description": "As a user I need [feature] So that [value]",
       "acceptanceCriteria": [
-        {"id": "AC 1", "scenario": "Given [context] When [action] Then [result]"},
-        {"id": "AC 2", "scenario": "Given [context] When [action] Then [result]"},
-        {"id": "AC 3", "scenario": "Given [context] When [action] Then [result]"}
+        {"id": "AC 1", "scenario": "Given X When Y Then Z"},
+        {"id": "AC 2", "scenario": "Given X When Y Then Z"},
+        {"id": "AC 3", "scenario": "Given X When Y Then Z"}
       ],
-      "releaseNotes": "Brief description of what was implemented",
-      "sprint": "Current or Next or Backlog",
-      "tags": ["relevant-tag"]
+      "releaseNotes": "What was built",
+      "sprint": "Current",
+      "tags": ["tag1"]
     }
   ]
-}
+}`;
 
-If no clear requirements found return: {"stories": []}
-`;
+      const model = STORY_EXTRACTION_MODEL;
+      console.log("[document] Using model:", model);
+      console.log("[document] Sending to Claude...");
 
       let attempt = 0;
       while (attempt < 2) {
         try {
           const response = await claude.messages.create({
-            model: "claude-haiku-4-5",
+            model,
             max_tokens: 3000,
-            messages: [{ role: "user", content: storyExtractionPrompt }],
+            messages: [{ role: "user", content: prompt }],
           });
 
-          const chunkAnalysis = parseChunkResponse(response.content[0].text);
+          const responseText =
+            response.content[0]?.type === "text" ? response.content[0].text : "";
 
-          if (!chunkAnalysis?.stories?.length) {
+          console.log("[document] Claude raw response:",
+            responseText.substring(0, 1000));
+
+          const chunkStories = parseStories(responseText);
+
+          if (!chunkStories.length) {
             console.log(`[document] Chunk ${chunkIndex + 1} — no stories found`);
             break;
           }
 
-          allStories = allStories.concat(chunkAnalysis.stories);
-          console.log(`[document] Chunk ${chunkIndex + 1} → ${chunkAnalysis.stories.length} stories. Total: ${allStories.length}`);
+          allStories = allStories.concat(chunkStories);
+          console.log(`[document] Chunk ${chunkIndex + 1} → ${chunkStories.length} stories. Total: ${allStories.length}`);
           break;
 
         } catch (err) {
