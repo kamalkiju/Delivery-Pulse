@@ -152,6 +152,10 @@ export const ensureFeatureInADO = async (featureId, epicAdoId, config) => {
     const token = config?.token || process.env.ADO_TOKEN;
     const pat = Buffer.from(`:${token}`).toString("base64");
     const encodedProject = encodeURIComponent(project);
+    const conn = await AdoConnection.findOne({
+      isActive: true,
+      connectionStatus: "connected",
+    }).sort({ isDefault: -1, createdAt: -1 });
 
     const patchDocument = [
       {
