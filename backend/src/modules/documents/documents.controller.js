@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
-import pdfParse from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 import Story from "../../models/Story.model.js";
 import Document from "../../models/Document.model.js";
 
@@ -71,7 +71,8 @@ const extractText = async (buffer, fileType) => {
     }
 
     if (type === "pdf" || type === "application/pdf") {
-      const result = await pdfParse(buffer);
+      const parser = new PDFParse({ data: buffer });
+      const result = await parser.getText();
       return result.text;
     }
 
