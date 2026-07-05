@@ -35,6 +35,7 @@ import settingsRoutes from "./modules/settings/settings.routes.js";
 import projectRoutes from "./modules/project/project.routes.js";
 import adoRoutes from "./modules/ado/ado.routes.js";
 import adoConnectionRoutes from "./modules/ado/ado-connection.routes.js";
+import epicFeatureRoutes from './modules/epic-feature/epic-feature.routes.js'
 
 // JSON 404 for unregistered paths
 import notFoundMiddleware from "./middlewares/notFound.middleware.js";
@@ -114,6 +115,7 @@ app.use("/api/stories", storyRoutes);
 // Azure DevOps — sync board, bulk push approved stories, status updates
 app.use("/api/ado", adoRoutes);
 app.use("/api/ado-connections", adoConnectionRoutes);
+app.use('/api/epic-feature', epicFeatureRoutes)
 app.use("/api/documents", documentsRoutes);
 app.use('/api/document-workshop', documentWorkshopRoutes)
 app.use("/api/meetings", meetingsRoutes);

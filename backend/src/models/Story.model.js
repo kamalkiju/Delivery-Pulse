@@ -129,6 +129,28 @@ const storySchema = new mongoose.Schema({
     ref: "Project",
   },
 
+  epicId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Epic",
+    default: null,
+  },
+
+  epicName: {
+    type: String,
+    default: null,
+  },
+
+  featureId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Feature",
+    default: null,
+  },
+
+  featureName: {
+    type: String,
+    default: null,
+  },
+
   releaseNotes: {
     type: String,
     default: "",
@@ -136,6 +158,11 @@ const storySchema = new mongoose.Schema({
 
   sprint: {
     type: String,
+    enum: [
+      "Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4",
+      "Current", "Next", "Backlog",
+    ],
+    default: "Backlog",
   },
 
   areaPath: {
