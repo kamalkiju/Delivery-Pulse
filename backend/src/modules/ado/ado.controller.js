@@ -274,3 +274,234 @@ export const bulkPushToADO = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+export const syncHierarchyToADO = async (req, res) => {
+  try {
+    const AdoConnection = (await import(
+      "../../models/AdoConnection.model.js"
+    )).default;
+    const Epic = (await import("../../models/Epic.model.js")).default;
+    const Feature = (await import(
+      "../../models/Feature.model.js"
+    )).default;
+
+    const conn = await AdoConnection.findOne({
+      isDefault: true,
+      isActive: true,
+      connectionStatus: "connected",
+    }) || await AdoConnection.findOne({
+      isActive: true,
+      connectionStatus: "connected",
+    });
+
+    if (!conn) {
+      return res.status(400).json({
+        success: false,
+        message: "No active ADO connection",
+      });
+    }
+
+    const pat = Buffer.from(`:${conn.patToken}`).toString("base64");
+    const encodedProject = encodeURIComponent(conn.adoProject);
+
+    const pushWorkItem = async (type, title, description, priority, parentAdoId) => {
+      const patchDocument = [
+        {
+          op: "add",
+          path: "/fields/System.Title",
+          value: title,
+        },
+        {
+          op: "add",
+          path: "/fields/System.Description",
+          value: description || "",
+        },
+        {
+          op: "add",
+          path: "/fields/Microsoft.VSTS.Common.Priority",
+          value: { Critical: 1, High: 2, Medium: 3, Low: 4 }[priority] || 3,
+        },
+      ];
+
+      if (parentAdoId) {
+        patchDocument.push({
+          op: "add",
+          path: "/relations/-",
+          value: {
+            rel: "System.LinkTypes.Hierarchy-Reverse",
+            url: `https://dev.azure.com/${conn.adoOrg}/_apis/wit/workItems/${parentAdoId}`,
+          },
+        });
+      }
+
+      const workItemType = type === "Epic" ? "Epic" : "Issue";
+      const url = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_apis/wit/workitems/$${workItemType}?api-version=7.0`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json-patch+json",
+          Authorization: `Basic ${pat}`,
+          Accept: "application/json",
+        },
+        body: JSON.stringify(patchDocument),
+      });
+
+      const text = await response.text();
+      if (!response.ok || text.includes("<!DOCTYPE")) {
+        throw new Error(`ADO ${response.status}: ${text.substring(0, 200)}`);
+      }
+
+      return JSON.parse(text);
+    };
+
+    const updateWorkItemParent = async (workItemId, parentAdoId) => {
+      const patchDocument = [
+        {
+          op: "add",
+          path: "/relations/-",
+          value: {
+            rel: "System.LinkTypes.Hierarchy-Reverse",
+            url: `https://dev.azure.com/${conn.adoOrg}/_apis/wit/workItems/${parentAdoId}`,
+          },
+        },
+      ];
+
+      const url = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
+
+      const response = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json-patch+json",
+          Authorization: `Basic ${pat}`,
+          Accept: "application/json",
+        },
+        body: JSON.stringify(patchDocument),
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        console.error("[sync-hierarchy] Update parent failed:",
+          response.status, text.substring(0, 200));
+        return false;
+      }
+
+      return true;
+    };
+
+    const results = {
+      epics: { pushed: 0, skipped: 0, failed: 0 },
+      features: { pushed: 0, skipped: 0, failed: 0 },
+      stories: { linked: 0, skipped: 0, failed: 0 },
+    };
+
+    const epicsWithoutADO = await Epic.find({ adoId: null });
+    console.log("[sync-hierarchy] Epics to push:", epicsWithoutADO.length);
+
+    for (const epic of epicsWithoutADO) {
+      try {
+        const result = await pushWorkItem(
+          "Epic",
+          epic.name,
+          epic.description,
+          epic.priority,
+          null,
+        );
+        epic.adoId = String(result.id);
+        epic.adoUrl = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_workitems/edit/${result.id}`;
+        await epic.save();
+        results.epics.pushed++;
+        console.log("[sync-hierarchy] ✅ Epic pushed:",
+          epic.name, "#" + result.id);
+        await new Promise((r) => setTimeout(r, 300));
+      } catch (err) {
+        results.epics.failed++;
+        console.error("[sync-hierarchy] ❌ Epic failed:",
+          epic.name, err.message);
+      }
+    }
+
+    const featuresWithoutADO = await Feature.find({ adoId: null })
+      .populate("epicId");
+    console.log("[sync-hierarchy] Features to push:",
+      featuresWithoutADO.length);
+
+    for (const feature of featuresWithoutADO) {
+      try {
+        const epicAdoId = feature.epicId?.adoId || null;
+        const result = await pushWorkItem(
+          "Issue",
+          `[Feature] ${feature.name}`,
+          feature.description,
+          feature.priority,
+          epicAdoId,
+        );
+        feature.adoId = String(result.id);
+        feature.adoUrl = `https://dev.azure.com/${conn.adoOrg}/${encodedProject}/_workitems/edit/${result.id}`;
+        await feature.save();
+        results.features.pushed++;
+        console.log("[sync-hierarchy] ✅ Feature pushed:",
+          feature.name, "#" + result.id,
+          epicAdoId ? `→ Epic #${epicAdoId}` : "");
+        await new Promise((r) => setTimeout(r, 300));
+      } catch (err) {
+        results.features.failed++;
+        console.error("[sync-hierarchy] ❌ Feature failed:",
+          feature.name, err.message);
+      }
+    }
+
+    const storiesWithADO = await Story.find({
+      adoId: { $exists: true, $ne: null },
+      featureId: { $exists: true, $ne: null },
+    }).populate("featureId");
+
+    console.log("[sync-hierarchy] Stories to link:", storiesWithADO.length);
+
+    for (const story of storiesWithADO) {
+      try {
+        const featureAdoId = story.featureId?.adoId;
+        if (!featureAdoId) {
+          results.stories.skipped++;
+          continue;
+        }
+
+        if (!story.adoId || story.adoId.includes("MOCK")) {
+          results.stories.skipped++;
+          continue;
+        }
+
+        const linked = await updateWorkItemParent(
+          story.adoId,
+          featureAdoId,
+        );
+
+        if (linked) {
+          results.stories.linked++;
+          console.log("[sync-hierarchy] ✅ Story linked:",
+            story.storyTitle?.substring(0, 40),
+            `ADO #${story.adoId} → Feature #${featureAdoId}`);
+        } else {
+          results.stories.failed++;
+        }
+
+        await new Promise((r) => setTimeout(r, 200));
+      } catch (err) {
+        results.stories.failed++;
+        console.error("[sync-hierarchy] ❌ Story link failed:",
+          story.storyTitle?.substring(0, 30), err.message);
+      }
+    }
+
+    console.log("[sync-hierarchy] Done:", JSON.stringify(results));
+
+    res.json({
+      success: true,
+      results,
+      message: `Synced: ${results.epics.pushed} epics, ${results.features.pushed} features pushed, ${results.stories.linked} stories linked`,
+    });
+  } catch (error) {
+    console.error("[sync-hierarchy] Error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
