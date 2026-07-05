@@ -25,7 +25,6 @@ const FeatureSchema = new Schema({
   },
   sprint: {
     type: String,
-    enum: ['Sprint 1', 'Sprint 2', 'Sprint 3', 'Sprint 4', 'Current', 'Next', 'Backlog'],
     default: 'Backlog'
   },
   status: {

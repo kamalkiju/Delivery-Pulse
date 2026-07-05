@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import Story from "../../models/Story.model.js";
 import Document from "../../models/Document.model.js";
+import Epic from "../../models/Epic.model.js";
+import Feature from "../../models/Feature.model.js";
 
 const getClaudeClient = () => {
   const apiKey = process.env.CLAUDE_API_KEY;
@@ -62,26 +64,12 @@ const STORY_EXTRACTION_MODEL = "claude-haiku-4-5";
 
 const sanitizeSprint = (sprint) => {
   if (!sprint) return "Backlog";
-
   const s = sprint.toString().trim();
-
-  const validSprints = [
-    "Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4",
-    "Current", "Next", "Backlog",
-  ];
-
-  if (validSprints.includes(s)) return s;
-
-  const lower = s.toLowerCase();
-  if (lower.includes("current")) return "Current";
-  if (lower.includes("next")) return "Next";
-  if (lower.includes("1")) return "Sprint 1";
-  if (lower.includes("2")) return "Sprint 2";
-  if (lower.includes("3")) return "Sprint 3";
-  if (lower.includes("4")) return "Sprint 4";
-
-  return "Backlog";
+  return s || "Backlog";
 };
+
+const escapeRegex = (value) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const fixStoryTitle = (title, structure) => {
   if (!title) return "General > Feature";
@@ -624,19 +612,82 @@ Return ONLY this JSON structure, nothing else, no markdown:
     savedDoc.processingProgress = 100;
     await savedDoc.save();
 
-    // ── Save stories to Review Queue ──────────────────────────────────────────
+    // ── Save stories with Epic → Feature → Story hierarchy ───────────────────
     const createdStories = [];
+    const epicCache = {};
+    const featureCache = {};
+
     for (let i = 0; i < allStories.length; i++) {
       const storyData = allStories[i];
 
       try {
+        const title = storyData.storyTitle || "";
+        const parts = title.split(">").map((p) => p.trim());
+
+        const epicName = parts[0] || "General";
+        const featureName = parts[1] || "General Feature";
+
+        const sanitizedSprint = sanitizeSprint(storyData.sprint);
+
         const acFormatted = (storyData.acceptanceCriteria || []).map((ac, idx) => ({
           id: ac.id || `AC ${idx + 1}`,
           scenario: typeof ac === "string" ? ac : ac.scenario || "",
         }));
 
+        const epicKey = epicName.toLowerCase();
+        let epic = epicCache[epicKey];
+
+        if (!epic) {
+          epic = await Epic.findOne({
+            organisationId: savedDoc.organisationId,
+            name: { $regex: new RegExp(`^${escapeRegex(epicName)}$`, "i") },
+          });
+
+          if (!epic) {
+            epic = await Epic.create({
+              organisationId: savedDoc.organisationId,
+              projectId: projectId || null,
+              name: epicName,
+              description: `Auto-created from document: ${savedDoc.originalName}`,
+              priority: storyData.priority || "Medium",
+              status: "active",
+              createdBy: savedDoc.uploadedBy,
+            });
+            console.log("[document] Created Epic:", epicName);
+          }
+
+          epicCache[epicKey] = epic;
+        }
+
+        const featureKey = `${epicKey}__${featureName.toLowerCase()}`;
+        let feature = featureCache[featureKey];
+
+        if (!feature) {
+          feature = await Feature.findOne({
+            epicId: epic._id,
+            name: { $regex: new RegExp(`^${escapeRegex(featureName)}$`, "i") },
+          });
+
+          if (!feature) {
+            feature = await Feature.create({
+              organisationId: savedDoc.organisationId,
+              projectId: projectId || null,
+              epicId: epic._id,
+              name: featureName,
+              description: `Auto-created from document: ${savedDoc.originalName}`,
+              priority: storyData.priority || "Medium",
+              sprint: sanitizedSprint,
+              status: "active",
+              createdBy: savedDoc.uploadedBy,
+            });
+            console.log("[document] Created Feature:", featureName, "under Epic:", epicName);
+          }
+
+          featureCache[featureKey] = feature;
+        }
+
         const story = await Story.create({
-          organisationId,
+          organisationId: savedDoc.organisationId,
           projectId: projectId || null,
           clientId: clientId || undefined,
           title: storyData.storyTitle,
@@ -649,10 +700,17 @@ Return ONLY this JSON structure, nothing else, no markdown:
           source: "document",
           sourceRef: savedDoc._id.toString(),
           sourceQuote: `From document: ${file.originalname}`,
+          epicId: epic._id,
+          epicName: epic.name,
+          featureId: feature._id,
+          featureName: feature.name,
           acceptanceCriteria: acFormatted.map((ac) => ac.scenario),
           acceptanceCriteriaFormatted: acFormatted,
           releaseNotes: storyData.releaseNotes || "",
-          sprint: sanitizeSprint(storyData.sprint),
+          businessRequirement: storyData.businessRequirement || "",
+          userFlow: storyData.userFlow || "",
+          sprint: sanitizedSprint,
+          tags: storyData.tags || [],
           isAIGenerated: true,
           sequence: i + 1,
           createdAt: new Date(Date.now() + (i * 100)),

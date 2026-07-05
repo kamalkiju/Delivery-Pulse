@@ -158,14 +158,6 @@ const storySchema = new mongoose.Schema({
 
   sprint: {
     type: String,
-    enum: [
-      "Sprint 1", "Sprint 2", "Sprint 3", "Sprint 4",
-      "Sprint 5", "Sprint 6", "Sprint 7", "Sprint 8",
-      "Current", "Next", "Backlog",
-      "Phase 1", "Phase 2", "Phase 3",
-      "Phase 4", "Phase 5", "Phase 6", "Phase 7",
-      "Phase 8", "Phase 9", "Phase 10",
-    ],
     default: "Backlog",
   },
 
