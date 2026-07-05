@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import mammoth from "mammoth";
+import pdfParse from "pdf-parse";
 import Story from "../../models/Story.model.js";
 import Document from "../../models/Document.model.js";
 
@@ -55,7 +57,49 @@ const fixStoryTitle = (title, structure) => {
   return `General > ${title}`;
 };
 
+const extractText = async (buffer, fileType) => {
+  try {
+    const type = (fileType || "").toLowerCase();
+
+    if (
+      type === "docx" ||
+      type === "doc" ||
+      type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value;
+    }
+
+    if (type === "pdf" || type === "application/pdf") {
+      const result = await pdfParse(buffer);
+      return result.text;
+    }
+
+    if (type === "xlsx" || type === "xls") {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      let text = "";
+      workbook.SheetNames.forEach((sheetName) => {
+        const sheet = workbook.Sheets[sheetName];
+        text += `Sheet: ${sheetName}\n`;
+        text += XLSX.utils.sheet_to_csv(sheet) + "\n\n";
+      });
+      return text;
+    }
+
+    if (type === "txt" || type === "text/plain" || type === "csv") {
+      return buffer.toString("utf8");
+    }
+
+    return buffer.toString("utf8");
+  } catch (error) {
+    console.error("[document] Text extraction error:", error.message);
+    return "";
+  }
+};
+
 export const uploadDocument = async (req, res) => {
+  let savedDoc;
   try {
     const { projectId, clientId } = req.body;
     const file = req.file;
@@ -88,40 +132,44 @@ export const uploadDocument = async (req, res) => {
 
     console.log("[document] Processing:", file.originalname, "size:", file.size);
 
-    // ── Extract text ──────────────────────────────────────────────────────────
-    let documentText = "";
-    const filename = file.originalname.toLowerCase();
+    const fileBuffer = file.buffer;
+    const fileType = file.mimetype ||
+      file.originalname.split(".").pop()?.toLowerCase();
 
-    if (filename.endsWith(".docx")) {
-      const mammoth = await import("mammoth");
-      const result = await mammoth.extractRawText({ buffer: file.buffer });
-      documentText = result.value;
-    } else if (filename.endsWith(".pdf")) {
-      const pdfParse = (await import("pdf-parse")).default;
-      const result = await pdfParse(file.buffer);
-      documentText = result.text;
-    } else if (filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
-      const XLSX = await import("xlsx");
-      const workbook = XLSX.read(file.buffer, { type: "buffer" });
-      workbook.SheetNames.forEach((sheetName) => {
-        const sheet = workbook.Sheets[sheetName];
-        documentText += `Sheet: ${sheetName}\n`;
-        documentText += XLSX.utils.sheet_to_csv(sheet) + "\n\n";
-      });
-    } else if (filename.endsWith(".txt") || filename.endsWith(".csv")) {
-      documentText = file.buffer.toString("utf-8");
-    }
+    console.log("[document] Extracting text from buffer...");
+    const extractedText = await extractText(fileBuffer, fileType);
+    console.log("[document] Extracted text length:", extractedText.length);
 
-    // VALIDATION 3 — minimum readable content
-    if (!documentText || documentText.trim().length < 100) {
+    if (!extractedText || extractedText.length < 100) {
+      console.error("[document] Text extraction failed or too short");
       return res.status(400).json({
         success: false,
-        message:
-          "Document appears to be empty or could not be read. Please check the file.",
+        message: "Could not extract text from document. Please check the file.",
       });
     }
 
+    const documentText = extractedText;
+
     console.log("[document] Total text length:", documentText.length);
+
+    // Save document record early with extracted text (no disk file on Render)
+    savedDoc = await Document.create({
+      organisationId,
+      projectId: projectId || null,
+      clientId: clientId || undefined,
+      originalName: file.originalname,
+      fileType: allowedTypes.includes(fileExt) ? fileExt : "txt",
+      filePath: "",
+      fileSize: file.size,
+      extractedText: documentText,
+      textLength: documentText.length,
+      status: "processing",
+      processingProgress: 0,
+      uploadedBy: userId,
+      uploadedByName: req.user?.name || "Unknown",
+    });
+
+    console.log("[document] Saved document record:", savedDoc._id);
 
     // ── Split into chunks (with overlap to avoid missing stories at boundaries) ─
     const CHUNK_SIZE = 3000;
@@ -409,19 +457,11 @@ ${chunk}`;
     console.log("[document] First:", allStories[0]?.storyTitle);
     console.log("[document] Last:", allStories[allStories.length - 1]?.storyTitle);
 
-    // ── Save document record (VALIDATION 4 — owner + org) ─────────────────────
-    const savedDoc = await Document.create({
-      organisationId,
-      projectId: projectId || null,
-      clientId: clientId || undefined,
-      originalName: file.originalname,
-      fileType: allowedTypes.includes(fileExt) ? fileExt : "txt",
-      fileSize: file.size,
-      status: "processed",
-      storiesCreated: allStories.length,
-      uploadedBy: userId,
-      uploadedByName: req.user?.name || "Unknown",
-    });
+    // ── Update document record after processing ───────────────────────────────
+    savedDoc.status = "processed";
+    savedDoc.storiesCreated = allStories.length;
+    savedDoc.processingProgress = 100;
+    await savedDoc.save();
 
     // ── Save stories to Review Queue ──────────────────────────────────────────
     const createdStories = [];
@@ -486,6 +526,16 @@ ${chunk}`;
     });
   } catch (error) {
     console.error("[document] Upload error:", error);
+
+    if (savedDoc?._id) {
+      try {
+        savedDoc.status = "failed";
+        await savedDoc.save();
+      } catch {
+        // ignore secondary save failure
+      }
+    }
+
     return res.status(500).json({ success: false, message: error.message });
   }
 };

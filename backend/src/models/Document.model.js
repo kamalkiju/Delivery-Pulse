@@ -38,6 +38,16 @@ const documentSchema = new mongoose.Schema({
     default: "",
   },
 
+  extractedText: {
+    type: String,
+    default: "",
+  },
+
+  textLength: {
+    type: Number,
+    default: 0,
+  },
+
   // Size in bytes — for upload limits UI
   fileSize: {
     type: Number,
