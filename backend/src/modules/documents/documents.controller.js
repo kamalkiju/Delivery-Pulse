@@ -68,9 +68,6 @@ const sanitizeSprint = (sprint) => {
   return s || "Backlog";
 };
 
-const escapeRegex = (value) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 const fixStoryTitle = (title, structure) => {
   if (!title) return "General > Feature";
 
@@ -613,114 +610,132 @@ Return ONLY this JSON structure, nothing else, no markdown:
     await savedDoc.save();
 
     // ── Save stories with Epic → Feature → Story hierarchy ───────────────────
+    const orgId = savedDoc.organisationId ||
+      req.user?.organisationId ||
+      req.user?.orgId ||
+      organisationId;
+
     const createdStories = [];
     const epicCache = {};
     const featureCache = {};
 
-    for (let i = 0; i < allStories.length; i++) {
-      const storyData = allStories[i];
-
+    for (const [index, storyData] of allStories.entries()) {
       try {
-        const title = storyData.storyTitle || "";
+        const title = storyData.storyTitle || storyData.title || "";
         const parts = title.split(">").map((p) => p.trim());
 
-        const epicName = parts[0] || "General";
-        const featureName = parts[1] || "General Feature";
+        const epicName = parts[0]?.trim() || "General";
+        const featureName = parts[1]?.trim() || "General Feature";
 
-        const sanitizedSprint = sanitizeSprint(storyData.sprint);
+        console.log("[document] Processing hierarchy:",
+          epicName, "→", featureName);
 
-        const acFormatted = (storyData.acceptanceCriteria || []).map((ac, idx) => ({
-          id: ac.id || `AC ${idx + 1}`,
-          scenario: typeof ac === "string" ? ac : ac.scenario || "",
-        }));
+        const epicKey = epicName.toLowerCase().replace(/\s+/g, "_");
 
-        const epicKey = epicName.toLowerCase();
-        let epic = epicCache[epicKey];
-
-        if (!epic) {
-          epic = await Epic.findOne({
-            organisationId: savedDoc.organisationId,
-            name: { $regex: new RegExp(`^${escapeRegex(epicName)}$`, "i") },
+        if (!epicCache[epicKey]) {
+          let existingEpic = await Epic.findOne({
+            organisationId: orgId,
+            name: { $regex: new RegExp(
+              epicName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i",
+            ) },
           });
 
-          if (!epic) {
-            epic = await Epic.create({
-              organisationId: savedDoc.organisationId,
-              projectId: projectId || null,
+          if (!existingEpic) {
+            existingEpic = await Epic.create({
+              organisationId: orgId,
+              projectId: savedDoc.projectId || projectId || null,
               name: epicName,
-              description: `Auto-created from document: ${savedDoc.originalName}`,
+              description: `Auto-created from: ${savedDoc.originalName}`,
               priority: storyData.priority || "Medium",
               status: "active",
               createdBy: savedDoc.uploadedBy,
             });
-            console.log("[document] Created Epic:", epicName);
+            console.log("[document] ✅ Created Epic:", epicName);
+          } else {
+            console.log("[document] ♻️ Reusing Epic:", epicName);
           }
 
-          epicCache[epicKey] = epic;
+          epicCache[epicKey] = existingEpic;
         }
 
-        const featureKey = `${epicKey}__${featureName.toLowerCase()}`;
-        let feature = featureCache[featureKey];
+        const epic = epicCache[epicKey];
 
-        if (!feature) {
-          feature = await Feature.findOne({
+        const featureKey = epicKey + "__" +
+          featureName.toLowerCase().replace(/\s+/g, "_");
+
+        if (!featureCache[featureKey]) {
+          let existingFeature = await Feature.findOne({
             epicId: epic._id,
-            name: { $regex: new RegExp(`^${escapeRegex(featureName)}$`, "i") },
+            name: { $regex: new RegExp(
+              featureName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i",
+            ) },
           });
 
-          if (!feature) {
-            feature = await Feature.create({
-              organisationId: savedDoc.organisationId,
-              projectId: projectId || null,
+          if (!existingFeature) {
+            existingFeature = await Feature.create({
+              organisationId: orgId,
+              projectId: savedDoc.projectId || projectId || null,
               epicId: epic._id,
               name: featureName,
-              description: `Auto-created from document: ${savedDoc.originalName}`,
+              description: `Auto-created from: ${savedDoc.originalName}`,
               priority: storyData.priority || "Medium",
-              sprint: sanitizedSprint,
+              sprint: storyData.sprint || "Backlog",
               status: "active",
               createdBy: savedDoc.uploadedBy,
             });
-            console.log("[document] Created Feature:", featureName, "under Epic:", epicName);
+            console.log("[document] ✅ Created Feature:",
+              featureName, "under", epicName);
+          } else {
+            console.log("[document] ♻️ Reusing Feature:", featureName);
           }
 
-          featureCache[featureKey] = feature;
+          featureCache[featureKey] = existingFeature;
         }
 
+        const feature = featureCache[featureKey];
+
         const story = await Story.create({
-          organisationId: savedDoc.organisationId,
-          projectId: projectId || null,
-          clientId: clientId || undefined,
-          title: storyData.storyTitle,
-          storyTitle: storyData.storyTitle,
-          description: storyData.description,
-          descriptionStatement: storyData.description,
+          organisationId: orgId,
+          clientId: savedDoc.clientId || clientId || null,
+          projectId: savedDoc.projectId || projectId || null,
+          title: storyData.storyTitle || storyData.title,
+          storyTitle: storyData.storyTitle || storyData.title,
+          description: storyData.description || "",
+          descriptionStatement: storyData.description || "",
           type: storyData.type || "Story",
           priority: storyData.priority || "Medium",
           status: "pending-review",
           source: "document",
           sourceRef: savedDoc._id.toString(),
           sourceQuote: `From document: ${file.originalname}`,
+          documentId: savedDoc._id,
           epicId: epic._id,
           epicName: epic.name,
           featureId: feature._id,
           featureName: feature.name,
-          acceptanceCriteria: acFormatted.map((ac) => ac.scenario),
-          acceptanceCriteriaFormatted: acFormatted,
+          acceptanceCriteria: (storyData.acceptanceCriteria || [])
+            .map((ac) => typeof ac === "string" ? ac : ac.scenario || ""),
+          acceptanceCriteriaFormatted: (storyData.acceptanceCriteria || [])
+            .map((ac, i) => ({
+              id: ac.id || `AC ${i + 1}`,
+              scenario: typeof ac === "string" ? ac : ac.scenario || "",
+            })),
           releaseNotes: storyData.releaseNotes || "",
           businessRequirement: storyData.businessRequirement || "",
           userFlow: storyData.userFlow || "",
-          sprint: sanitizedSprint,
+          sprint: storyData.sprint || "Backlog",
           tags: storyData.tags || [],
           isAIGenerated: true,
-          sequence: i + 1,
-          createdAt: new Date(Date.now() + (i * 100)),
+          sequence: index,
         });
 
         createdStories.push(story);
-
-        console.log(`[document] Story ${i + 1}: ${story.storyTitle?.substring(0, 50)} | AC: ${acFormatted.length}`);
-      } catch (storyError) {
-        console.error("[document] Story create error:", storyError.message);
+        console.log("[document] ✅ Story linked:",
+          story.storyTitle?.substring(0, 40),
+          "| Epic:", epic.name,
+          "| Feature:", feature.name);
+      } catch (err) {
+        console.error("[document] Story create error:", err.message);
       }
     }
 

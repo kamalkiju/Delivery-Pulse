@@ -98,6 +98,12 @@ const storySchema = new mongoose.Schema({
     type: String,
   },
 
+  documentId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Document",
+    default: null,
+  },
+
   // Original client wording that AI used to draft this story (quote for PM review)
   sourceQuote: {
     type: String,
