@@ -28,6 +28,175 @@ export async function resolveAdoConfig(config = null) {
   return null;
 }
 
+export const ensureEpicInADO = async (epicId, config) => {
+  try {
+    const Epic = (await import("../../models/Epic.model.js")).default;
+    const epic = await Epic.findById(epicId);
+
+    if (!epic) return null;
+
+    if (epic.adoId) {
+      console.log("[ado] Epic already in ADO:", epic.name, "#" + epic.adoId);
+      return epic.adoId;
+    }
+
+    const org = config?.org || process.env.ADO_ORG;
+    const project = config?.project || process.env.ADO_PROJECT;
+    const token = config?.token || process.env.ADO_TOKEN;
+    const pat = Buffer.from(`:${token}`).toString("base64");
+    const encodedProject = encodeURIComponent(project);
+
+    const patchDocument = [
+      {
+        op: "add",
+        path: "/fields/System.Title",
+        value: epic.name,
+      },
+      {
+        op: "add",
+        path: "/fields/System.Description",
+        value: epic.description || "",
+      },
+      {
+        op: "add",
+        path: "/fields/Microsoft.VSTS.Common.Priority",
+        value: { Critical: 1, High: 2, Medium: 3, Low: 4 }[epic.priority] || 3,
+      },
+    ];
+
+    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Epic?api-version=7.0`;
+
+    console.log("[ado] Pushing Epic to ADO:", epic.name);
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+        Authorization: `Basic ${pat}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify(patchDocument),
+    });
+
+    const responseText = await response.text();
+
+    if (responseText.includes("<!DOCTYPE")) {
+      throw new Error("ADO auth failed for Epic push");
+    }
+
+    if (!response.ok) {
+      throw new Error(`ADO Epic error ${response.status}: ${responseText.substring(0, 200)}`);
+    }
+
+    const result = JSON.parse(responseText);
+    const adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${result.id}`;
+
+    epic.adoId = String(result.id);
+    epic.adoUrl = adoUrl;
+    await epic.save();
+
+    console.log("[ado] ✅ Epic pushed to ADO:", epic.name, "#" + result.id);
+    return String(result.id);
+  } catch (error) {
+    console.error("[ado] Epic push failed:", error.message);
+    return null;
+  }
+};
+
+export const ensureFeatureInADO = async (featureId, epicAdoId, config) => {
+  try {
+    const Feature = (await import("../../models/Feature.model.js")).default;
+    const feature = await Feature.findById(featureId);
+
+    if (!feature) return null;
+
+    if (feature.adoId) {
+      console.log("[ado] Feature already in ADO:", feature.name, "#" + feature.adoId);
+      return feature.adoId;
+    }
+
+    const org = config?.org || process.env.ADO_ORG;
+    const project = config?.project || process.env.ADO_PROJECT;
+    const token = config?.token || process.env.ADO_TOKEN;
+    const pat = Buffer.from(`:${token}`).toString("base64");
+    const encodedProject = encodeURIComponent(project);
+
+    const patchDocument = [
+      {
+        op: "add",
+        path: "/fields/System.Title",
+        value: feature.name,
+      },
+      {
+        op: "add",
+        path: "/fields/System.Description",
+        value: feature.description || "",
+      },
+      {
+        op: "add",
+        path: "/fields/Microsoft.VSTS.Common.Priority",
+        value: { Critical: 1, High: 2, Medium: 3, Low: 4 }[feature.priority] || 3,
+      },
+    ];
+
+    if (feature.sprint && feature.sprint !== "Backlog") {
+      patchDocument.push({
+        op: "add",
+        path: "/fields/System.IterationPath",
+        value: `${project}\\${feature.sprint}`,
+      });
+    }
+
+    if (epicAdoId) {
+      patchDocument.push({
+        op: "add",
+        path: "/relations/-",
+        value: {
+          rel: "System.LinkTypes.Hierarchy-Reverse",
+          url: `https://dev.azure.com/${org}/_apis/wit/workItems/${epicAdoId}`,
+        },
+      });
+    }
+
+    const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$Feature?api-version=7.0`;
+
+    console.log("[ado] Pushing Feature to ADO:", feature.name);
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+        Authorization: `Basic ${pat}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify(patchDocument),
+    });
+
+    const responseText = await response.text();
+
+    if (responseText.includes("<!DOCTYPE")) {
+      throw new Error("ADO auth failed for Feature push");
+    }
+
+    if (!response.ok) {
+      throw new Error(`ADO Feature error ${response.status}: ${responseText.substring(0, 200)}`);
+    }
+
+    const result = JSON.parse(responseText);
+    const adoUrl = `https://dev.azure.com/${org}/${encodedProject}/_workitems/edit/${result.id}`;
+
+    feature.adoId = String(result.id);
+    feature.adoUrl = adoUrl;
+    await feature.save();
+
+    console.log("[ado] ✅ Feature pushed to ADO:", feature.name, "#" + result.id);
+    return String(result.id);
+  } catch (error) {
+    console.error("[ado] Feature push failed:", error.message);
+    return null;
+  }
+};
+
 export const createADOWorkItem = async (story, config = null) => {
   const credentials = await resolveAdoConfig(config);
 
@@ -122,6 +291,40 @@ export const createADOWorkItem = async (story, config = null) => {
     console.log("[ado] Assigning to:", story.assignee);
   }
 
+  let featureAdoId = null;
+
+  if (story.featureId) {
+    try {
+      let epicAdoId = null;
+
+      if (story.epicId) {
+        epicAdoId = await ensureEpicInADO(story.epicId, credentials);
+        console.log("[ado] Epic ADO ID:", epicAdoId);
+      }
+
+      featureAdoId = await ensureFeatureInADO(
+        story.featureId,
+        epicAdoId,
+        credentials,
+      );
+      console.log("[ado] Feature ADO ID:", featureAdoId);
+    } catch (err) {
+      console.error("[ado] Epic/Feature push error:", err.message);
+    }
+  }
+
+  if (featureAdoId) {
+    patchDocument.push({
+      op: "add",
+      path: "/relations/-",
+      value: {
+        rel: "System.LinkTypes.Hierarchy-Reverse",
+        url: `https://dev.azure.com/${org}/_apis/wit/workItems/${featureAdoId}`,
+      },
+    });
+    console.log("[ado] Story will be linked to Feature #" + featureAdoId);
+  }
+
   const encodedProject = encodeURIComponent(project);
   const encodedType = encodeURIComponent(workItemType);
   const url = `https://dev.azure.com/${org}/${encodedProject}/_apis/wit/workitems/$${encodedType}?api-version=7.0`;
@@ -208,4 +411,11 @@ export async function updateWorkItemStatus(adoId, status) {
   }
 }
 
-export default { resolveAdoConfig, createADOWorkItem, createWorkItem, updateWorkItemStatus };
+export default {
+  resolveAdoConfig,
+  ensureEpicInADO,
+  ensureFeatureInADO,
+  createADOWorkItem,
+  createWorkItem,
+  updateWorkItemStatus,
+};
