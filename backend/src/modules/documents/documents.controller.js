@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import mammoth from "mammoth";
 import Story from "../../models/Story.model.js";
 import Document from "../../models/Document.model.js";
 
@@ -56,87 +55,147 @@ const fixStoryTitle = (title, structure) => {
   return `General > ${title}`;
 };
 
-const extractText = async (buffer, fileType, originalName, mimetype) => {
+const extractTextFromDocx = async (buffer) => {
   try {
-    const type = (fileType || "").toLowerCase();
+    const mammothModule = await import("mammoth");
+    const mammoth = mammothModule.default || mammothModule;
 
-    if (
-      type === "docx" ||
-      type === "doc" ||
-      originalName?.endsWith(".docx") ||
-      mimetype?.includes("wordprocessingml") ||
-      type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ) {
-      try {
-        const rawResult = await mammoth.extractRawText({ buffer });
-        let text = rawResult.value || "";
+    const allText = [];
 
-        console.log("[document] Raw text length:", text.length);
+    const rawResult = await mammoth.extractRawText({ buffer });
+    if (rawResult.value?.trim()) {
+      allText.push(rawResult.value.trim());
+    }
 
-        if (text.length < 500) {
-          const htmlResult = await mammoth.convertToHtml({ buffer });
-          const htmlText = htmlResult.value
-            .replace(/<[^>]+>/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-          console.log("[document] HTML text length:", htmlText.length);
-          if (htmlText.length > text.length) {
-            text = htmlText;
+    const htmlResult = await mammoth.convertToHtml({ buffer });
+    if (htmlResult.value) {
+      const html = htmlResult.value;
+
+      const tableText = [];
+      const tableRegex = /<table[^>]*>([\s\S]*?)<\/table>/gi;
+      let tableMatch;
+
+      while ((tableMatch = tableRegex.exec(html)) !== null) {
+        const tableHtml = tableMatch[1];
+        const rows = tableHtml.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+
+        rows.forEach((row) => {
+          const cells = row.match(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi) || [];
+          const cellTexts = cells.map((cell) =>
+            cell.replace(/<[^>]+>/g, "").trim(),
+          ).filter(Boolean);
+
+          if (cellTexts.length > 0) {
+            tableText.push(cellTexts.join(" | "));
           }
-        }
+        });
+      }
 
-        console.log("[document] Final extracted text length:", text.length);
-        return text;
-      } catch (err) {
-        console.error("[document] Mammoth error:", err.message);
-        return "";
+      if (tableText.length > 0) {
+        allText.push(tableText.join("\n"));
+      }
+
+      const plainText = html
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, "")
+        .replace(/<h[1-6][^>]*>/gi, "\n## ")
+        .replace(/<\/h[1-6]>/gi, "\n")
+        .replace(/<li[^>]*>/gi, "\n- ")
+        .replace(/<p[^>]*>/gi, "\n")
+        .replace(/<br[^>]*>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (plainText.length > 0) {
+        allText.push(plainText);
       }
     }
 
-    if (
-      type === "pdf" ||
-      type === "application/pdf" ||
-      (buffer[0] === 0x25 && buffer[1] === 0x50)
-    ) {
-      try {
-        const pdfParseModule = await import("pdf-parse");
-        const pdfParseFn = pdfParseModule.default ||
-          pdfParseModule.PDFParse ||
-          Object.values(pdfParseModule)[0];
+    const combined = [...new Set(allText)].join("\n\n");
+    console.log("[document] Combined text length:", combined.length);
+    return combined;
+  } catch (err) {
+    console.error("[document] Extraction error:", err.message);
+    return "";
+  }
+};
 
-        if (pdfParseModule.PDFParse) {
-          const parser = new pdfParseModule.PDFParse({ data: buffer });
-          const result = await parser.getText();
-          return result.text || "";
-        }
+const extractText = async (buffer, fileType, originalName, mimetype) => {
+  const ext = originalName?.split(".").pop()?.toLowerCase();
+  const type = (fileType || ext || mimetype || "").toLowerCase();
 
-        const result = await pdfParseFn(buffer);
+  console.log("[document] Extracting type:", type, "ext:", ext);
+
+  if (
+    type.includes("docx") ||
+    ext === "docx" || ext === "doc" ||
+    type.includes("wordprocessingml") ||
+    type.includes("word")
+  ) {
+    return await extractTextFromDocx(buffer);
+  }
+
+  if (type.includes("pdf") || ext === "pdf") {
+    try {
+      const pdfParseModule = await import("pdf-parse");
+
+      if (pdfParseModule.PDFParse) {
+        const parser = new pdfParseModule.PDFParse({ data: buffer });
+        const result = await parser.getText();
         return result.text || "";
-      } catch (err) {
-        console.error("[document] PDF parse error:", err.message);
-        return "";
       }
-    }
 
-    if (type === "xlsx" || type === "xls") {
-      const XLSX = await import("xlsx");
+      const pdfParseFn = pdfParseModule.default ||
+        Object.values(pdfParseModule)[0];
+      const result = await pdfParseFn(buffer);
+      return result.text || "";
+    } catch (err) {
+      console.error("[document] PDF error:", err.message);
+      return "";
+    }
+  }
+
+  if (
+    type.includes("xlsx") ||
+    ext === "xlsx" || ext === "xls" ||
+    type.includes("spreadsheet")
+  ) {
+    try {
+      const xlsxModule = await import("xlsx");
+      const XLSX = xlsxModule.default || xlsxModule;
       const workbook = XLSX.read(buffer, { type: "buffer" });
-      let text = "";
+      const text = [];
+
       workbook.SheetNames.forEach((sheetName) => {
         const sheet = workbook.Sheets[sheetName];
-        text += `Sheet: ${sheetName}\n`;
-        text += XLSX.utils.sheet_to_csv(sheet) + "\n\n";
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        text.push(`Sheet: ${sheetName}\n${csv}`);
       });
-      return text;
-    }
 
-    if (type === "txt" || type === "text/plain" || type === "csv") {
-      return buffer.toString("utf8");
+      return text.join("\n\n");
+    } catch (err) {
+      console.error("[document] Excel error:", err.message);
+      return "";
     }
+  }
 
+  if (
+    type.includes("text") ||
+    ext === "txt" || ext === "csv" || ext === "md"
+  ) {
     return buffer.toString("utf8");
-  } catch (error) {
-    console.error("[document] Text extraction error:", error.message);
+  }
+
+  try {
+    return buffer.toString("utf8");
+  } catch {
     return "";
   }
 };
@@ -220,13 +279,13 @@ export const uploadDocument = async (req, res) => {
     console.log("[document] Saved document record:", savedDoc._id);
 
     // ── Split into chunks (with overlap to avoid missing stories at boundaries) ─
-    const CHUNK_SIZE = 3000;
-    const OVERLAP = 200;
+    const CHUNK_SIZE = 5000;
+    const OVERLAP = 500;
 
     let chunks = [];
-    if (documentText.length <= CHUNK_SIZE + OVERLAP) {
+    if (documentText.length <= 8000) {
       chunks = [documentText];
-      console.log("[document] Small document - processing as single chunk");
+      console.log("[document] Small document - single chunk processing");
     } else {
       for (let i = 0; i < documentText.length; i += CHUNK_SIZE - OVERLAP) {
         chunks.push(documentText.slice(i, i + CHUNK_SIZE));
@@ -297,65 +356,50 @@ ${documentText.substring(0, 5000)}`;
         structureError.message);
     }
 
-    const epicsContext = documentStructure?.epics
-      ? `Document structure has these sections:
-${documentStructure.epics.map((e) => `- ${e.name}: ${e.description}`).join("\n")}`
-      : "Use the document headings as epic/section names.";
-
-    // ── Step 2: Process each chunk with structure context ─────────────────────
+    // ── Step 2: Process each chunk ────────────────────────────────────────────
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const chunk = chunks[chunkIndex];
       const isLast = chunkIndex === chunks.length - 1;
 
       console.log(`[document] Processing chunk ${chunkIndex + 1}/${chunks.length}`);
 
-      const prompt = `You are a senior Business Analyst.
-Extract ALL user stories from this document section.
+      const storyExtractionPrompt = `You are a senior Business Analyst.
+Analyze this document and extract ALL requirements as user stories.
 
-This may be an amendments document describing changes
-to existing features. Extract each change or update
-as a separate user story.
+DOCUMENT CONTENT:
+${chunk}
 
-${epicsContext}
+IMPORTANT RULES:
+1. Extract EVERY requirement, change, feature, or update mentioned
+2. Each table row with a requirement = one story
+3. Each bullet point with a requirement = one story
+4. Each UI change or screen update = one story
+5. Each workflow step = one story
+6. Even small changes like "add a button" or "show/hide a field" = one story
+7. Do NOT skip anything — extract maximum stories possible
 
-STRICT RULES:
-1. storyTitle format: "[Section/Epic Name] > [Feature Name]"
-   Use the ACTUAL section names from the document
-   NOT generic names
-
-2. description MUST start with "As a" and include "So that"
-   Format: "As a [user role] I need [feature] So that [value]"
-
-3. Every story needs MINIMUM 3 acceptance criteria
-   Format: "Given [context] When [action] Then [result]"
-
-4. Extract EVERY requirement as separate story
-   Count every "As a user" or feature description
-
-5. If document has no clear user stories
-   Convert every requirement into user story format
-
-Return ONLY raw JSON - no markdown:
+Return ONLY raw JSON with no markdown:
 {
   "stories": [
     {
-      "storyTitle": "Section Name > Feature Name",
+      "storyTitle": "Epic/Module Name > Feature Name",
       "type": "Story or Bug or Feature or Task",
       "priority": "Critical or High or Medium or Low",
-      "description": "As a [role] I need [what] So that [value]",
+      "description": "As a [specific user role] I need [specific requirement] So that [business value]",
       "acceptanceCriteria": [
-        {"id": "AC 1", "scenario": "Given X When Y Then Z"},
-        {"id": "AC 2", "scenario": "Given X When Y Then Z"},
-        {"id": "AC 3", "scenario": "Given X When Y Then Z"}
+        {"id": "AC 1", "scenario": "Given [context] When [action] Then [result]"},
+        {"id": "AC 2", "scenario": "Given [context] When [action] Then [result]"},
+        {"id": "AC 3", "scenario": "Given [context] When [action] Then [result]"}
       ],
-      "releaseNotes": "We introduced [feature] to [solve problem]",
-      "sprint": "Current or Next or Backlog"
+      "releaseNotes": "Brief description of what was implemented",
+      "sprint": "Current or Next or Backlog",
+      "tags": ["relevant-tag"]
     }
   ]
 }
 
-Document section ${chunkIndex + 1} of ${chunks.length}:
-${chunk}`;
+If no clear requirements found return: {"stories": []}
+`;
 
       let attempt = 0;
       while (attempt < 2) {
@@ -363,7 +407,7 @@ ${chunk}`;
           const response = await claude.messages.create({
             model: "claude-haiku-4-5",
             max_tokens: 3000,
-            messages: [{ role: "user", content: prompt }],
+            messages: [{ role: "user", content: storyExtractionPrompt }],
           });
 
           const chunkAnalysis = parseChunkResponse(response.content[0].text);
